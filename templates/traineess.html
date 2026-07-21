@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Trainees</title>
+</head>
+<body>
+    <h1>Trainees</h1>
+    <ul>
+        {% for trainee in traineess %}
+            <li><a href="{{ url_for('individual_sets', name=trainee) }}">{{ trainee }}</a></li>
+        {% endfor %}
+    </ul>
+</body>
+</html>

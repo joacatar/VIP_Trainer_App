@@ -1,0 +1,382 @@
+{
+  "LaunchDarklyRules": {
+    "CountriesIncludedPerGroup": [
+      { "GroupName": "USA", "IncludedCountries": ["USA"] },
+      {
+        "GroupName": "EU",
+        "IncludedCountries": [
+          "Austria", "Belgium", "Bulgaria", "Croatia", "Cyprus", "Czechia",
+          "Denmark", "Estonia", "Finland", "France", "Germany", "Greece",
+          "Hungary", "Ireland", "Italy", "Latvia", "Lithuania", "Luxembourg",
+          "Malta", "Netherlands", "Norway", "Poland", "Portugal", "Romania",
+          "Slovakia", "Slovenia", "Spain", "Sweden", "Switzerland",
+          "United Kingdom of Great Britain and Northern Ireland"
+        ]
+      },
+      { "GroupName": "BRAZIL", "IncludedCountries": ["Brazil"] },
+      { "GroupName": "MEXICO", "IncludedCountries": ["Mexico"] },
+      { "GroupName": "CHILE", "IncludedCountries": ["Chile"] },
+      { "GroupName": "JAPAN", "IncludedCountries": ["Japan"] },
+      { "GroupName": "CHINA", "IncludedCountries": ["China"] },
+      { "GroupName": "NZ", "IncludedCountries": ["New Zealand"] },
+      { "GroupName": "AUS", "IncludedCountries": ["Australia"] },
+      { "GroupName": "CAN", "IncludedCountries": ["Canada"] },
+      { "GroupName": "SAFFRICA", "IncludedCountries": ["South Africa"] },
+      { "GroupName": "INDIA", "IncludedCountries": ["India"] }
+    ],
+    "MGS_Augments": [
+      {
+        "Flag": "IS_24_FULL_AUG_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": true,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_24_HALF_AUG_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_24_FULL_OBL_AUG_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": true,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_24_HALF_OBL_AUG_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_FULL_10_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_FULL_OBL_10_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_FULL_20_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_FULL_OBL_20_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_FULL_10_CLAT_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_FULL_OBL_10_2LAT_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_FULL_20_2LAT_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_FULL_OBL_20_2LAT_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_15_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_OBL_15_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_25_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_OBL_25_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_35_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_OBL_35_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_15_2LAT_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_OBL_15_2LAT_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_25_2LAT_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_OBL_25_2LAT_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_HALF_35_2LAT_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      }
+    ],
+    "Non_Augmented_MGS": [
+      {
+        "Flag": "IS_28_MONO_15_POST_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_MONO_15_SCREW_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_28_SCREW_0LAT_ENABLED",
+        "USA": true, "EU": true, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": true, "CAN": true,
+        "SAFFRICA": true, "INDIA": true
+      },
+      {
+        "Flag": "IS_28_POST_0LAT_ENABLED",
+        "USA": true, "EU": true, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": true, "CAN": true,
+        "SAFFRICA": true, "INDIA": true
+      },
+      {
+        "Flag": "IS_28_SCREW_2LAT_ENABLED",
+        "USA": true, "EU": true, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": true, "CAN": true,
+        "SAFFRICA": true, "INDIA": true
+      },
+      {
+        "Flag": "IS_28_POST_2LAT_ENABLED",
+        "USA": true, "EU": true, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": true, "CAN": true,
+        "SAFFRICA": true, "INDIA": true
+      }
+    ],
+    "Augmented_Vault_Lock": [
+      {
+        "Flag": "IS_VAULT_LOCK_AUG_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": true, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      }
+    ],
+    "Apex_Reverse_Anatomic": [
+      {
+        "Flag": "IS_APEX_REVERS_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_APEX_ANATOMIC_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      }
+    ],
+    "Univers_Revers_Size_4_Stem": [
+      {
+        "Flag": "IS_UNIVERS_REVERS_STEM_SIZE_4_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      }
+    ],
+    "Ream_Depth": [
+      {
+        "Flag": "DEPTH_REAM",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": true, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      }
+    ],
+    "Adobe_Sign": [
+      {
+        "Flag": "IS_ADOBESIGN_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      }
+    ],
+    "Glenospheres": [
+      {
+        "Flag": "IS_45_GLENOSPHERE_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": true, "AUS": true, "CAN": false,
+        "SAFFRICA": true, "INDIA": false
+      },
+      {
+        "Flag": "IS_33_GLENOSPHERE_ENABLED",
+        "USA": true, "EU": true, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": true, "AUS": true, "CAN": false,
+        "SAFFRICA": true, "INDIA": true
+      }
+    ],
+    "Humeral_Planning": [
+      {
+        "Flag": "IS_HUMERUS_ENABLED",
+        "USA": true, "EU": true, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": true, "AUS": false, "CAN": true,
+        "SAFFRICA": true, "INDIA": true
+      },
+      {
+        "Flag": "IS_COMBO_LINERS_ENABLED",
+        "USA": true, "EU": true, "BRA искусственного интеллектаZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": true, "INDIA": true
+      },
+      {
+        "Flag": "IS_33_CUP_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": true,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": true,
+        "SAFFRICA": false, "INDIA": true
+      },
+      {
+        "Flag": "IS_QUACK_CONTROLS_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_JOINT_DICOMS_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      }
+    ],
+    "Jira": {
+      "JIRA_ENABLED": true,
+      "JIRA_URL": "https://external-arthrex.atlassian.net",
+      "JIRA_PROJECT_KEY": "VIPOT",
+      "JIRA_ADMINEMAIL": "svc_jiravi@arthrex.com"
+    },
+    "Data_Privacy": [
+      {
+        "Flag": "AUTO_CASE_DELETION_EXEMPT",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "PATIENT_PHONE_NUMBER_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_PSEUDONYMIZE_DEFAULT",
+        "USA": false, "EU": true, "BRAZIL": true, "MEXICO": true, "CHILE": false,
+        "JAPAN": false, "CHINA": true, "NZ": true, "AUS": true, "CAN": true,
+        "SAFFRICA": false, "INDIA": false
+      }
+    ],
+    "Patient_Specific_Baseplate": [
+      {
+        "Flag": "IS_PSB_ENABLED",
+        "USA": false, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      }
+    ],
+    "Limited_Release_Features": [
+      { "Flag": "IS_ROM_ENABLED", "LimitedRelease": "limitedrelease80 group", "FullCommercialLaunch": true },
+      { "Flag": "IS_OSTEO_ENABLED", "LimitedRelease": "limitedrelease80 group", "FullCommercialLaunch": true },
+      { "Flag": "IS_MULTIPLAN_APPROVAL_ENABLED", "LimitedRelease": "limitedrelease80 group", "FullCommercialLaunch": true },
+      { "Flag": "IS_QUICK_CONTROLS_ENABLED", "LimitedRelease": "limitedrelease80 group", "FullCommercialLaunch": true },
+      { "Flag": "IS_JOINT_DICOMS_ENABLED", "LimitedRelease": "limitedrelease80 group", "FullCommercialLaunch": true }
+    ],
+    "After_Limited_Release": [
+      {
+        "Flag": "IS_ROM_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_OSTEO_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_MULTIPLAN_APPROVAL_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_QUACK_CONTROLS_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      {
+        "Flag": "IS_JOINT_DICOMS_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      }
+    ],
+    "Other_Features": [
+      { "Flag": "USER_MAINTENANCE_MODE", "DefaultValue": false },
+      { "Flag": "CRON_MAINTENANCE_MODE", "DefaultValue": false },
+      {
+        "Flag": "IS_3D_ENABLED",
+        "USA": true, "EU": false, "BRAZIL": false, "MEXICO": false, "CHILE": false,
+        "JAPAN": false, "CHINA": false, "NZ": false, "AUS": false, "CAN": false,
+        "SAFFRICA": false, "INDIA": false
+      },
+      { "Flag": "OSTEOPHYTE_REMOVAL_VALUE", "DefaultValue": 20 }
+    ]
+  }
+}

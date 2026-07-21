@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Case Review - Summary {{name}}</title>
+</head>
+<body>
+    <h3>Training Case:</h3>
+    <p>Name: {{ name }}</p>
+    <p>{{order_number}}</p>
+    <ul>
+        {% for key in ['Scan comments', 'Rider form comments','Segmentation comments', 'Scapula landmarking comments', 'Glenoid landmarking comments', 'Humeral landmark comments', 'Humeral implant comments', 'Glenoid implant comments'] %}
+        <li><strong>{{ key }}:</strong> {{ feedback[key] }}</li>
+        {% endfor %}
+    </ul>
+    <a href="{{ url_for('index') }}">Start Over</a>
+</body>
+</html>

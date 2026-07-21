@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Peer Review Feedback</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+        h1, h2, h3 {
+            margin-bottom: 10px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        select, input[type="number"] {
+            margin-bottom: 15px;
+            padding: 5px;
+        }
+        form {
+            margin-top: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            background-color: #007bff;
+            color: #fff;
+            border: none;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+
+<!-- Page 1: Number Input -->
+<div id="page1" style="display: block;">
+    <h1>Peer Review Feedback</h1>
+    <p>Please provide feedback for the planner's past work.</p>
+    <label for="orderNumber">Order Number:</label>
+    <select id="orderNumber" required>
+        <optgroup label="Set 1">
+            <option value="Set 1 Case 1">Case 1</option>
+            <option value="Set 1 Case 2">Case 2</option>
+            <option value="Set 1 Case 3">Case 3</option>
+            <option value="Set 1 Case 4">Case 4</option>
+            <option value="Set 1 Case 5">Case 5</option>
+            <option value="Set 1 Case 6">Case 6</option>
+            <option value="Set 1 Case 7">Case 7</option>
+            <option value="Set 1 Case 8">Case 8</option>
+            <option value="Set 1 Case 9">Case 9</option>
+            <option value="Set 1 Case 10">Case 10</option>
+            <option value="Set 1 Case 11">Case 11</option>
+            <option value="Set 1 Case 12">Case 12</option>
+            <option value="Set 1 Case 13">Case 13</option>
+            <option value="Set 1 Case 14">Case 14</option>
+            <option value="Set 1 Case 15">Case 15</option>
+            <option value="Set 1 Case 16">Case 16</option>
+        </optgroup>
+        <optgroup label="Set 2">
+            <option value="Set 2 Case 1">Case 1</option>
+            <option value="Set 2 Case 2">Case 2</option>
+            <option value="Set 2 Case 3">Case 3</option>
+            <option value="Set 2 Case 4">Case 4</option>
+            <option value="Set 2 Case 5">Case 5</option>
+            <option value="Set 2 Case 6">Case 6</option>
+            <option value="Set 2 Case 7">Case 7</option>
+            <option value="Set 2 Case 8">Case 8</option>
+            <option value="Set 2 Case 9">Case 9</option>
+            <option value="Set 2 Case 10">Case 10</option>
+            <option value="Set 2 Case 11">Case 11</option>
+            <option value="Set 2 Case 12">Case 12</option>
+            <option value="Set 2 Case 13">Case 13</option>
+            <option value="Set 2 Case 14">Case 14</option>
+            <option value="Set 2 Case 15">Case 15</option>
+            <option value="Set 2 Case 16">Case 16</option>
+        </optgroup>
+    </select>
+    <br>
+    <button onclick="showPage2()">Next</button>
+</div>
+
+<!-- Page 2: Documentation Questions Adding a feature to easily navigate in the form and adding picture box for each section  !!1 Page!!-->
+<div id="page2" style="display: none;">
+    <h2>Peer Review for Planner</h2>
+    <p>Order Number: <span id="displayOrderNumber"></span></p>
+    <p>Provide feedback for:</p>
+    <select id="name">
+        <option value="Justin">Justin</option>
+        <option value="Cindy">Cindy</option>
+        <option value="Emma">Emma</option>
+        <option value="chris.cronin@arthrex.com">ChrisC</option>
+        <option value="chris.cronin@arthrex.com">ChrisC</option>
+        <option value="angel.esquilin@arthrex.com">AngelP</option>
+        <option value="ariel.cardenas@arthrex.com">ArielC</option>
+        <option value="eloy.grela@arthrex.com">EloyG</option>
+        <option value="rodik.figueroaecharri@arthrex.com">RodikF</option>
+        <option value="stephen.choi@arthrex.com">StephenC</option>
+        <option value="woodly.plancher@arthrex.com">WoodlyP</option>
+        <option value="harver.borbon-mendez@arthrex.com">HarverBorbon</option>
+        <option value="luis.cala@arthrex.com">LuisC</option>
+        <option value="yaneisy.delgado@arthrex.com">YaneisyDelgado</option>
+        <option value="sergio.barrera@arthrex.com">Sergio B</option>
+        <option value="brian.keary@arthrex.com">BrianK</option>
+        <option value="ruben.diaz@arthrex.com">RubenC</option>
+        <option value="yaneilys.diaz@arthrex.com">YannyD</option>
+        <option value="armando.becerra@arthrex.com">ArmandoB</option>
+        <option value="jordan.trakas@arthrex.com">JordanT</option>
+        <option value="ayberk.yagiz@arthrex.com">AyberkY</option>
+        <option value="joao.tarirabarroso@arthrex.com">JoaoT</option>
+        <option value="maddiel.martinez@arthrex.com">MaddielM</option>
+        <option value="lyndale.chambers@arthrex.com">LyndaleC</option>
+        <option value="matteo.mckinney@arthrex.com">MatteoM</option>
+        <option value="daniel.valdescabrera@arthrex.com">DanielV</option>
+        <option value="valerie.nolasco@arthrex.com">ValerieN</option>
+        <option value="aaron.luther@arthrex.com">AaronL</option>
+        <option value="juan.soundara@arthrex.com">CarlosS</option>
+        <option value="stephany.valdesperez@arthrex.com">StephanyV</option>
+        <option value="gabriela.pozotrujillo@arthrex.com">GabrielaP</option>
+        <option value="fernando.cruzaguilar@arthrex.com">FernandoC</option>
+        <option value="kevin.fusco@arthrex.com">KevinF</option>
+        <!-- Add more options as needed -->
+    </select>
+    <br>
+    <hr>
+    <h2>Documentation Feedback Questionnaire</h2>
+    <form onsubmit="showPage3(); return false;">
+        <label>Question 1: How would you rate the planner's selection of scan?</label><br>
+        <select id="q1" onchange="showQuestion('q1');">
+          <option value="Outstanding">Outstanding</option>
+          <option value="Meets Expectation">Meets Expectation</option>
+          <option value="Needs Improvement">Needs Improvement</option>
+          <option value="Sent Back">Sent Back</option>
+        </select>
+        <br>
+        <div id="q1Comments" style="display: none;">
+        <label>Scan Selection Feedback comments?</label><br>
+        <input type="checkbox" name="q1C" value="Meets Expectation or best scan choice chosen by planner"> Meets Expectation or best scan choice chosen by planner<br>
+        <input type="checkbox" name="q1C" value="Better scan choice available to have chosen"> Better scan choice available to have chosen<br>
+        <input type="checkbox" name="q1C" value="Scan is a rejection and cannot be planned with"> Scan is a rejection and cannot be planned with<br>
+        <!-- Use a unique identifier for the "Other" checkbox and its associated text input -->
+        <input type="text" id="q1COtherText" name="q1COtherText" placeholder="Additional comments:" rows="2" style="width: 400px;">
+        <br>
+        </div>
+        <label>Question 2: How would you rate the planner's rider form?</label><br>
+        <select id="q2" onchange="showQuestion('q2');">
+          <option value="Outstanding">Outstanding</option>
+          <option value="Meets Expectation">Meets Expectation</option>
+          <option value="Needs Improvement">Needs Improvement</option>
+          <option value="Sent Back">Sent Back</option>
+        </select>
+        <br>
+        <div id="q2Comments" style="display: none;">
+        <label>Rider Form Feedback comments?</label><br>
+        <input type="checkbox" name="q2C" value="Rider form reflects all correct information and is completely filled out"> Rider form reflects all correct information and is completely filled out<br>
+        <input type="checkbox" name="q2C" value="Rider form is missing a few fields of information or is not signed"> Rider form is missing a few fields of information or is not signed<br>
+        <input type="text" id="q2COtherText" name="q2COtherText" placeholder="Additional comments:" rows="2" style="width: 400px;">
+        <br>
+        </div>
+    <hr>
+    <!-- From Page 4: Segmentation Edits Questions -->
+    <h2>Segmentation Feedback Questionnaire</h2>
+        <label>Question 3: How would you rate the planner's segmentation?</label><br>
+        <select id="q3" onchange="showQuestion('q3');">
+          <option value="Outstanding">Outstanding</option>
+          <option value="Meets Expectation">Meets Expectation</option>
+          <option value="Needs Improvement">Needs Improvement</option>
+          <option value="Sent Back">Sent Back</option>
+        </select>
+        <br>
+        <div id="q3Comments" style="display: none;">
+        <label>Segmentation Feedback comments?</label><br>
+        <input type="checkbox" name="q3C" value="Soft tissue still remained around glenoid rim"> Soft tissue still remained around glenoid rim<br>
+        <input type="checkbox" name="q3C" value="Soft tissue still remained on glenoid face"> Soft tissue still remained on glenoid face<br>
+        <input type="checkbox" name="q3C" value="Excessive soft tissue was around scapula"> Excessive soft tissue was around scapula<br>
+        <input type="checkbox" name="q3C" value="Light humeral head remained on glenoid"> Light humeral head remained on glenoid<br>
+        <input type="checkbox" name="q3C" value="Major humeral head remained on glenoid"> Major humeral head remained on glenoid<br>
+        <input type="checkbox" name="q3C" value="Better thresholding choice was available"> Better thresholding choice was available<br>
+        <input type="checkbox" name="q3C" value="Better cortex choice was available for choosing"> Better cortex choice was available for choosing<br>
+
+        <input type="text" id="q3COtherText" name="q3COtherText" placeholder="Additional comments:" rows="2" style="width: 400px;">
+        <br>
+        </div>
+    <hr>
+    <!-- From Page 5: Scapula Landmarks Questions Add glenoid landmarks and make it one-->
+    <h2>Scapula Landmarks Feedback Questionnaire</h2>
+        <label>Question 4: How would you rate the planner's Scapula Landmarking?</label><br>
+        <select id="q4" onchange="showQuestion('q4');">
+          <option value="Outstanding">Outstanding</option>
+          <option value="Meets Expectation">Meets Expectation</option>
+          <option value="Needs Improvement">Needs Improvement</option>
+          <option value="Sent Back">Sent Back</option>
+        </select>
+        <br>
+        <div id="q4Comments" style="display: none;">
+        <label>Scapula Landmarking Feedback comments?</label><br>
+        <input type="checkbox" name="q4C" value="Minor movement to glenoid center"> Minor movement to glenoid center<br>
+        <input type="checkbox" name="q4C" value="Minor movement to trigonum scapula"> Minor movement to trigonum scapula<br>
+        <input type="checkbox" name="q4C" value="Minor movement to angulus inferior"> Minor movement to angulus inferior<br>
+        <input type="checkbox" name="q4C" value="Glenoid Center only centered in one view"> Glenoid Center only centered in one view<br>
+        <input type="checkbox" name="q4C" value="Major movement to two or more landmarks"> Major movement to two or more landmarks<br>
+
+        <input type="text" id="q4COtherText" name="q4COtherText" placeholder="Additional comments:" rows="2" style="width: 400px;">
+        <br>
+        </div>
+        <label>Question 5: How would you rate the planner's Glenoid Landmarking?</label><br>
+        <select id="q5" onchange="showQuestion('q5');">
+          <option value="Outstanding">Outstanding</option>
+          <option value="Meets Expectation">Meets Expectation</option>
+          <option value="Needs Improvement">Needs Improvement</option>
+          <option value="Sent Back">Sent Back</option>
+        </select>
+        <br>
+        <div id="q5Comments" style="display: none;">
+        <label>Glenoid Landmarking Feedback comments?</label><br>
+        <input type="checkbox" name="q5C" value="Minor movment of anterior or posterior glenoid rim landmark"> Minor movment of anterior or posterior glenoid rim landmark<br>
+        <input type="checkbox" name="q5C" value="Minor movment of superior glenoid rim landmark"> Minor movment of superior glenoid rim landmark<br>
+        <input type="checkbox" name="q5C" value="Glenoid plane too expanded on glenoid"> Glenoid plane too expanded on glenoid<br>
+        <input type="checkbox" name="q5C" value="Glenoid plane too cramped on glenoid"> Glenoid plane too cramped on glenoid<br>
+        <input type="checkbox" name="q5C" value="Major change to version"> Major change to version<br>
+        <input type="checkbox" name="q5C" value="Major change to inclination"> Major change to inclination<br>
+        <input type="checkbox" name="q5C" value="Reset glenoid plane landmarks to new locations"> Reset glenoid plane landmarks to new locations<br>
+        <input type="checkbox" name="q5C" value="Forgot to set some coracoid / acromion / scapular neck landmarks"> Forgot to set some coracoid / acromion / scapular neck landmarks<br>
+
+        <input type="text" id="q5COtherText" name="q5COtherText" placeholder="Additional comments:" rows="2" style="width: 400px;">
+        <br>
+        </div>
+    <hr>
+    <!-- From Page 6: Humeral Landmark Questions-->
+    <h2>Humeral Landmarks Feedback Questionnaire</h2>
+        <label>Question 6: How would you rate the planner's Humeral Landmarking?</label><br>
+        <select id="q6" onchange="showQuestion('q6');">
+          <option value="Outstanding">Outstanding</option>
+          <option value="Meets Expectation">Meets Expectation</option>
+          <option value="Needs Improvement">Needs Improvement</option>
+          <option value="Sent Back">Sent Back</option>
+        </select>
+        <br>
+        <div id="q6Comments" style="display: none;">
+        <label>Humeral Landmark Feedback comments?</label><br>
+        <input type="checkbox" name="q6C" value="Minor correction to humeral shaft"> Minor correction to humeral shaft<br>
+        <input type="checkbox" name="q6C" value="Major correction to humeral shaft"> Major correction to humeral shaft<br>
+        <input type="checkbox" name="q6C" value="Humeral plane directed more through humeral head or changed Neck Shaft Angle"> Humeral plane directed more through humeral head or changed Neck Shaft Angle<br>
+        <input type="checkbox" name="q6C" value="Slight change to other humeral landmarks"> Slight change to other humeral landmarks<br>
+        <input type="checkbox" name="q6C" value="Forgot to place one or more other humeral landmarks"> Forgot to place one or more other humeral landmarks<br>
+        <input type="checkbox" name="q6C" value="Humeral head size reduced or increased"> Humeral head size reduced or increased<br>
+
+        <input type="text" id="q6COtherText" name="q6COtherText" placeholder="Additional comments:" rows="2" style="width: 400px;">
+        <br>
+        </div>
+    <hr>
+    <!-- From Page 7: Humeral Head Implant Questions-->
+    <h2>Humeral Implant Feedback Questionnaire</h2>
+        <label>Question 7: How would you rate the planner's Humeral Implant?</label><br>
+        <select id="q7" onchange="showQuestion('q7');">
+          <option value="Outstanding">Outstanding</option>
+          <option value="Meets Expectation">Meets Expectation</option>
+          <option value="Needs Improvement">Needs Improvement</option>
+          <option value="Sent Back">Sent Back</option>
+        </select>
+        <br>
+        <div id="q7Comments" style="display: none;">
+        <label>Humeral Implant Feedback comments?</label><br>
+        <input type="checkbox" name="q7C" value="Humeral stem selection not appropiate for anatomy"> Humeral stem selection not appropiate for anatomy<br>
+        <input type="checkbox" name="q7C" value="Sample input"> Sample input<br>
+        <input type="checkbox" name="q7C" value="Sample input"> Sample input<br>
+        <input type="checkbox" name="q7C" value="Sample input"> Sample input<br>
+        <input type="checkbox" name="q7C" value="Sample input"> Sample input<br>
+
+        <input type="text" id="q7COtherText" name="q7COtherText" placeholder="Additional comments:">
+        <br>
+        </div>
+    <hr>
+    <!-- From Page 8: Glenoid Implant Questions-->
+    <h2>Glenoid Implant Feedback Questionnaire</h2>
+        <label>Question 8: How would you rate the planner's Glenoid Implant?</label><br>
+        <select id="q8" onchange="showQuestion('q8');">
+          <option value="Outstanding">Outstanding</option>
+          <option value="Meets Expectation">Meets Expectation</option>
+          <option value="Needs Improvement">Needs Improvement</option>
+          <option value="Sent Back">Sent Back</option>
+        </select>
+        <br>
+        <div id="q8Comments" style="display: none;">
+        <label>Glenoid Implant Feedback comments?</label><br>
+        <input type="checkbox" name="q8C" value="Rolled to better superior implant trajectory"> Rolled to better superior implant trajectory<br>
+        <input type="checkbox" name="q8C" value="Implant version changed"> Implant version changed<br>
+        <input type="checkbox" name="q8C" value="Implant inclination changed"> Implant inclination changed<br>
+        <input type="checkbox" name="q8C" value="Implant downsizing unnecessary"> Implant downsizing unnecessary<br>
+        <input type="checkbox" name="q8C" value="Perforated a polyethylene component(VL)"> Perforated a polyethylene component(VL)<br>
+        <input type="checkbox" name="q8C" value="Medialized slightly too deep into glenoid"> Medialized slightly too deep into glenoid<br>
+        <input type="checkbox" name="q8C" value="Able to achieve 100% backside seating"> Able to achieve 100% backside seating<br>
+
+        <input type="text" id="q8COtherText" name="q8COtherText" placeholder="Additional comments:">
+        <br>
+        </div>
+
+      <label>Upload Picture (JPEG or PNG):</label>
+      <input type="file" id="pictureUpload" accept=".jpg, .jpeg, .png">
+
+        <button type="submit">Next</button>
+    </form>
+</div>
+
+<!-- Page 3: Email Template Add hyperlink, so it can send email through outlook-->
+<div id="page3" style="display: none;">
+    <h3>Peer Review Feedback for <span id="selectedNameEmail"></span></h3>
+    <p>Training Case: <span id="displayOrderNumberEmail"></span></p>
+    <p>Feedback:</p>
+    <br>
+    <ul id="feedbackList"></ul>
+    <button onclick="sendFeedbackByEmail()">Generate Email</button>
+<button onclick="resetForm()">Start Over</button>
+</div>
+
+<script>
+let selectedName = "";
+let responses = []
+let ONumber ="";
+
+function showPage2() {
+    const orderNumber = document.getElementById("orderNumber").value;
+    if (orderNumber) {
+        document.getElementById("displayOrderNumber").textContent = orderNumber;
+        ONumber = orderNumber
+        document.getElementById("displayOrderNumberEmail").textContent = document.getElementById("orderNumber").value;
+        document.getElementById("page1").style.display = "none";
+        document.getElementById("page2").style.display = "block";
+        const pictureUpload = document.getElementById("pictureUpload");
+        pictureUpload.addEventListener("change", handlePictureUpload);
+    } else {
+        alert("Please enter an order number.");
+    }
+}
+
+
+function showPage3() {
+    selectedName = document.getElementById("name").value;
+    document.getElementById("selectedNameEmail").textContent = selectedName;
+    q1Response = document.getElementById('q1').value;
+    q1CResponse = getSelectedCheckboxes('q1C');
+    q2Response = document.getElementById('q3').value;
+    q2CResponse = getSelectedCheckboxes('q2C');
+    q3Response = document.getElementById('q3').value;
+    q3CResponse = getSelectedCheckboxes('q3C');
+    q4Response = document.getElementById('q4').value;
+    q4CResponse = getSelectedCheckboxes('q4C');
+    q5Response = document.getElementById('q5').value;
+    q5CResponse = getSelectedCheckboxes('q5C');
+    q6Response = document.getElementById('q6').value;
+    q6CResponse = getSelectedCheckboxes('q6C');
+    q7Response = document.getElementById('q7').value;
+    q7CResponse = getSelectedCheckboxes('q7C');
+    q8Response = document.getElementById('q8').value;
+    q8CResponse = getSelectedCheckboxes('q8C');
+    responses.push({
+      type:"Documentation Feedback",
+      Scan_rating: q1Response,
+      Scan_comments: q1CResponse,
+      Rider_rating: q2Response,
+      Rider_comments: q2CResponse,
+    })
+    responses.push({
+        type: "Segmentation Feedback",
+        Segmentation_rating: q3Response,
+        Segmentation_comments: q3CResponse,
+    });
+    responses.push({
+        type: "Scapula Landmarks Feedback",
+        Scapula_landmark_rating: q4Response,
+        Scapula_landmark_comments: q4CResponse,
+        Glenoid_landmark_rating: q5Response,
+        Glenoid_landmark_comments: q5CResponse,
+    });
+    responses.push({
+        type: "Humeral Landmarks Feedback",
+        Humeral_landmark_rating: q6Response,
+        Humeral_landmark_comments: q6CResponse,
+    });
+    responses.push({
+        type: "Humeral Implant Feedback",
+        Humeral_implant_rating: q7Response,
+        Humeral_implant_comments: q7CResponse,
+    });
+    responses.push({
+        type: "Glenoid Implant Feedback",
+        Glenoid_implant_rating: q8Response,
+        Glenoid_implant_comments: q8CResponse,
+    });
+    document.getElementById("page2").style.display = "none";
+    document.getElementById("page3").style.display = "block";
+
+    const feedbackList = document.getElementById("feedbackList");
+    feedbackList.innerHTML = "";
+
+    for (const response of responses) {
+        const listItem = document.createElement("li");
+        listItem.innerHTML = `<strong>${response.type}:</strong>`;
+        feedbackList.appendChild(listItem);
+
+        for (const key in response) {
+            if (key !== "type" && response[key]) {
+                const subListItem = document.createElement("li");
+                subListItem.className = 'ulremove';
+                subListItem.innerHTML = `<strong style="font-size: 80%;">${key}:</strong> <br><span style="font-size: 80%;">${response[key]}</span>`;
+                feedbackList.appendChild(subListItem);
+            }
+        }
+
+        const separator = document.createElement("hr");
+        feedbackList.appendChild(separator);
+    }
+
+    // Include the uploaded picture (if available)
+    const pictureFile = pictureUpload.files[0];
+    if (pictureFile) {
+        const listItem = document.createElement("li");
+        const imageElement = document.createElement("img");
+
+        // Create a data URL from the uploaded file
+        const reader = new FileReader();
+        reader.onload = function () {
+            const img = new Image();
+            img.src = reader.result;
+
+            // Calculate the new dimensions while maintaining aspect ratio
+            let newWidth, newHeight;
+            if (img.width > img.height) {
+                // Landscape orientation
+                newWidth = "300px";
+                newHeight = "auto";
+            } else {
+                // Portrait orientation
+                newHeight = "300px";
+                newWidth = "auto";
+            }
+
+            // Set the new dimensions
+            imageElement.src = reader.result;
+            imageElement.style.maxWidth = newWidth;
+            imageElement.style.maxHeight = newHeight;
+        };
+        reader.readAsDataURL(pictureFile);
+
+        listItem.appendChild(imageElement);
+        feedbackList.appendChild(listItem);
+    }
+}
+
+
+function showQuestion(c_question) {
+    const qNSelect = document.getElementById(c_question);
+    const questionCContainer = document.getElementById(c_question+'Comments');
+
+    if (qNSelect.value !== 'Outstanding') {
+        questionCContainer.style.display = 'block';
+
+    } else {
+        questionCContainer.style.display = 'none';
+        // If "Outstanding" is selected, clear the selection in Question 2
+        const qNCCheckboxes = document.querySelectorAll('input[name="q1C"]');
+        qNCCheckboxes.forEach(checkbox => (checkbox.checked = false));
+    }
+}
+
+function getSelectedCheckboxes(name) {
+    const checkboxes = document.querySelectorAll('input[name="' + name + '"]:checked');
+    const selectedValues = Array.from(checkboxes).map(checkbox => checkbox.value);
+    const otherInput = document.getElementById(name + "OtherText");
+    const otherText = otherInput.value.trim();
+    if (otherText !== " ") {
+      selectedValues.push(otherText);
+    }
+    return selectedValues.join(', ');
+}
+
+function handlePictureUpload() {
+    const pictureFile = pictureUpload.files[0]; // Get the uploaded file
+    if (pictureFile) {
+        // Display the picture on the page (optional)
+        const feedbackList = document.getElementById("feedbackList");
+        const pictureListItem = document.createElement("li");
+        pictureListItem.innerHTML = `<strong>Uploaded Picture:</strong> ${pictureFile.name}`;
+        feedbackList.appendChild(pictureListItem);
+
+        // Include the picture in the email (optional)
+        // You can add the pictureFile to your feedback template here
+    }
+}
+
+function copyFeedback() {
+    // Select the content of the page 9
+    var feedbackContent = document.getElementById("page4").innerText;
+
+    // Create a temporary textarea element to hold the content
+    var textarea = document.createElement("textarea");
+    textarea.value = feedbackContent;
+
+    // Append the textarea to the document
+    document.body.appendChild(textarea);
+
+    // Select the content of the textarea
+    textarea.select();
+
+    // Copy the selected content to the clipboard
+    document.execCommand("copy");
+
+    // Remove the temporary textarea
+    document.body.removeChild(textarea);
+
+    // Optionally, provide feedback to the user
+    alert("Feedback copied to clipboard!");
+}
+
+function resetForm() {
+    document.getElementById("page1").style.display = "block";
+    document.getElementById("page2").style.display = "none";
+    document.getElementById("page3").style.display = "none";
+    document.getElementById("page4").style.display = "none";
+    document.getElementById("orderNumber").value = "";
+    selectedName = "";
+}
+
+function generateFeedbackTemplate() {
+    let feedback = "";
+    feedback += 'Peer review Feedback for order number: '+ ONumber + '\n\n';
+
+    for (const response of responses) {
+        feedback += response.type + ":\n";
+        for (const key in response) {
+            if (key !== "type" && response[key]) {
+                feedback += key + ": " + response[key] + "\n";
+            }
+        }
+        feedback += "\n"; // Add space after each section
+    }
+    const pictureFile = pictureUpload.files[0];
+    if (pictureFile) {
+        feedback += "Uploaded Picture: " + pictureFile.name + "\n";
+    }
+    return feedback;
+}
+
+function sendFeedbackByEmail() {
+  const feedbackTemplate = generateFeedbackTemplate();
+  const subject = encodeURIComponent("Peer Review Feedback");
+  const body = encodeURIComponent(feedbackTemplate);
+
+  const mailtoLink = `mailto:${selectedName}?subject=${subject}&body=${body}`;
+  window.location.href = mailtoLink;
+}
+</script>
+
+</body>
+</html>

@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>{{ name }}'s Sets</title>
+</head>
+<body>
+    <h1>{{ name }}'s Sets</h1>
+    <ul>
+        {% for set_name in sets %}
+            <li><a href="{{ url_for('set_cases', name=name, set_name=set_name) }}">{{ set_name }}</a></li>
+        {% endfor %}
+    </ul>
+</body>
+</html>
