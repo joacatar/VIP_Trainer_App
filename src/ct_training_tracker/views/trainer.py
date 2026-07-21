@@ -7,11 +7,18 @@ from postgrest.exceptions import APIError
 from ct_training_tracker.metrics import summarize_progress
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
-from ct_training_tracker.views.case_board import enrich_cases, visible_case_frame
+from ct_training_tracker.routing import query_value, set_query
+from ct_training_tracker.views.case_board import (
+    enrich_cases,
+    render_case_summary,
+    select_case_from_list,
+)
+from ct_training_tracker.views.case_files import render_trainer_case_review
 
 
 def render_dashboard(repository: TrainingRepository) -> None:
     st.header("Training overview")
+    st.caption("Path: `/trainer`")
     rows = repository.list_progress()
     if not rows:
         st.info("No trainees yet. Add the first trainee to generate their 32 cases.")
@@ -55,6 +62,7 @@ def render_dashboard(repository: TrainingRepository) -> None:
 
 def render_trainees(repository: TrainingRepository, user_id: str) -> None:
     st.header("Add trainee")
+    st.caption("Path: `/trainer/trainees`")
     with st.form("add_trainee", clear_on_submit=True):
         left, middle, right = st.columns(3)
         full_name = left.text_input("Full name")
@@ -88,32 +96,12 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
     st.rerun()
 
 
-def _assign_selected_case(
-    repository: TrainingRepository,
-    frame: pd.DataFrame,
-    set_no: int,
-) -> None:
-    open_cases = frame.loc[
-        (frame["set_no"] == set_no) & (frame["raw_status"] == "not_started")
-    ]
-    if open_cases.empty:
-        st.caption("All cases in this set are already assigned.")
+def _assign_case(repository: TrainingRepository, *, case_row: dict) -> None:
+    if case_row["raw_status"] != "not_started":
         return
 
-    case_by_id = {row["id"]: row for row in open_cases.to_dict(orient="records")}
-    case_id = st.selectbox(
-        "Case to assign",
-        options=list(case_by_id),
-        format_func=lambda value: (
-            f"Case {case_by_id[value]['case_no']} · "
-            f"schedule {case_by_id[value]['schedule_due_date']}"
-        ),
-        key=f"assign_case_{set_no}",
-    )
-    selected = case_by_id[case_id]
-    schedule_due = dt.date.fromisoformat(str(selected["schedule_due_date"]))
-
-    with st.form(f"assign_case_{set_no}_{case_id}"):
+    schedule_due = dt.date.fromisoformat(str(case_row["schedule_due_date"]))
+    with st.form(f"assign_case_{case_row['id']}"):
         due_date = st.date_input(
             "Due date",
             value=schedule_due,
@@ -130,8 +118,8 @@ def _assign_selected_case(
 
     try:
         repository.assign_homework(
-            case_id=case_id,
-            title=f"Set {set_no} · Case {selected['case_no']}",
+            case_id=case_row["id"],
+            title=f"Set {case_row['set_no']} · Case {case_row['case_no']}",
             instructions=notes,
             schedule_due_date=schedule_due,
             due_date=due_date,
@@ -140,50 +128,72 @@ def _assign_selected_case(
         st.error(f"Could not assign case: {exc.message}")
         return
 
-    st.success(f"Set {set_no} · Case {selected['case_no']} assigned.")
+    st.success(f"Set {case_row['set_no']} · Case {case_row['case_no']} assigned.")
     st.rerun()
 
 
 def render_cases(repository: TrainingRepository) -> None:
     st.header("Cases")
+    st.caption("Path: `/trainer/cases?trainee=…&case=…`")
     trainees = repository.list_active_trainees()
     if not trainees:
         st.info("Add a trainee first.")
         return
 
     labels = {row["id"]: row["full_name"] for row in trainees}
+    trainee_ids = list(labels)
+    requested_trainee = query_value("trainee")
+    trainee_index = (
+        trainee_ids.index(requested_trainee) if requested_trainee in labels else 0
+    )
+
     trainee_id = st.selectbox(
         "Trainee",
-        options=list(labels),
+        options=trainee_ids,
+        index=trainee_index,
         format_func=lambda value: labels[value],
     )
+    if trainee_id != requested_trainee:
+        set_query(trainee=trainee_id, case=None)
+        st.rerun()
+
     cases = repository.list_cases(trainee_id, include_files=True)
     assignments = repository.list_homework_for_cases([row["id"] for row in cases])
     frame = enrich_cases(cases, assignments)
+    cases_by_id = {row["id"]: row for row in cases}
 
-    set_one_tab, set_two_tab = st.tabs(["Set 1", "Set 2"])
-    with set_one_tab:
-        st.dataframe(
-            visible_case_frame(frame, 1),
-            hide_index=True,
-            use_container_width=True,
+    list_col, detail_col = st.columns([0.95, 1.35], gap="large")
+    with list_col:
+        st.markdown("#### Case list")
+        selected = select_case_from_list(
+            frame,
+            key_prefix="trainer",
+            trainee_id=trainee_id,
         )
-        with st.expander("Assign a Set 1 case", expanded=False):
-            _assign_selected_case(repository, frame, 1)
-    with set_two_tab:
-        st.dataframe(
-            visible_case_frame(frame, 2),
-            hide_index=True,
-            use_container_width=True,
-        )
-        with st.expander("Assign a Set 2 case", expanded=False):
-            _assign_selected_case(repository, frame, 2)
+
+    with detail_col:
+        st.markdown("#### Case detail")
+        if selected is None:
+            st.info("Select a case on the left.")
+            return
+
+        render_case_summary(selected)
+        if selected["raw_status"] == "not_started":
+            st.markdown("##### Assign")
+            _assign_case(repository, case_row=selected)
+        else:
+            st.markdown("##### Files")
+            render_trainer_case_review(
+                repository,
+                case=cases_by_id[selected["id"]],
+            )
 
 
 def render_trainer_portal(
     repository: TrainingRepository,
     profile: Profile,
 ) -> None:
+    """Legacy single-page portal kept for compatibility."""
     st.sidebar.write(f"Signed in as **{profile['full_name'] or 'Trainer'}**")
     page = st.sidebar.radio(
         "Navigation",
