@@ -1,8 +1,11 @@
 import datetime as dt
 from typing import Any, cast
 
+from ct_training_tracker.files import storage_object_path, validate_upload
 from ct_training_tracker.models import HomeworkAssignment, Profile, Trainee
 from supabase import Client
+
+CASE_FILES_BUCKET = "case-files"
 
 
 class TrainingRepository:
@@ -133,3 +136,118 @@ class TrainingRepository:
             .execute()
         )
         return cast(list[HomeworkAssignment], result.data or [])
+
+    def list_requirements_for_case(self, case_id: str) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("file_requirements")
+            .select(
+                "id, case_id, kind, status, replacement_reason, accepted_at, "
+                "case_files(id, version_no, storage_path, original_filename, "
+                "mime_type, size_bytes, review_status, review_note, uploaded_at)"
+            )
+            .eq("case_id", case_id)
+            .order("kind")
+            .execute()
+        )
+        rows = cast(list[dict[str, Any]], result.data or [])
+        for row in rows:
+            versions = sorted(
+                row.get("case_files") or [],
+                key=lambda item: int(item.get("version_no") or 0),
+            )
+            row["case_files"] = versions
+            row["latest_file"] = versions[-1] if versions else None
+        return rows
+
+    def next_file_version(self, requirement_id: str) -> int:
+        result = (
+            self._client.table("case_files")
+            .select("version_no")
+            .eq("requirement_id", requirement_id)
+            .order("version_no", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = result.data or []
+        if not rows:
+            return 1
+        return int(rows[0]["version_no"]) + 1
+
+    def upload_case_file(
+        self,
+        *,
+        user_id: str,
+        case_id: str,
+        requirement_id: str,
+        kind: str,
+        filename: str,
+        content: bytes,
+        mime_type: str | None,
+    ) -> str:
+        safe_name = validate_upload(kind, filename)
+        version_no = self.next_file_version(requirement_id)
+        object_path = storage_object_path(
+            user_id=user_id,
+            case_id=case_id,
+            kind=kind,
+            version_no=version_no,
+            filename=safe_name,
+        )
+        self._client.storage.from_(CASE_FILES_BUCKET).upload(
+            object_path,
+            content,
+            file_options={
+                "content-type": mime_type or "application/octet-stream",
+                "upsert": "false",
+            },
+        )
+        try:
+            result = self._client.rpc(
+                "register_case_file",
+                {
+                    "target_requirement_id": requirement_id,
+                    "file_storage_path": object_path,
+                    "file_original_filename": safe_name,
+                    "file_mime_type": mime_type,
+                    "file_size_bytes": len(content),
+                },
+            ).execute()
+        except Exception:
+            self._client.storage.from_(CASE_FILES_BUCKET).remove([object_path])
+            raise
+        return cast(str, result.data)
+
+    def review_case_file(
+        self,
+        *,
+        file_id: str,
+        decision: str,
+        note: str = "",
+    ) -> None:
+        self._client.rpc(
+            "review_case_file",
+            {
+                "target_file_id": file_id,
+                "decision": decision,
+                "decision_note": note,
+            },
+        ).execute()
+
+    def create_signed_download_url(
+        self,
+        storage_path: str,
+        *,
+        expires_in: int = 300,
+    ) -> str:
+        result = self._client.storage.from_(CASE_FILES_BUCKET).create_signed_url(
+            storage_path,
+            expires_in,
+        )
+        url = (
+            result.get("signedURL")
+            or result.get("signedUrl")
+            or result.get("signed_url")
+        )
+        if not url:
+            raise RuntimeError("Could not create a download link.")
+        return cast(str, url)

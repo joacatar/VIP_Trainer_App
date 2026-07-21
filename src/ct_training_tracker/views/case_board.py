@@ -1,8 +1,13 @@
 """Shared case-board helpers for trainer and trainee portals."""
 
+from __future__ import annotations
+
 from typing import Any
 
 import pandas as pd
+import streamlit as st
+
+from ct_training_tracker.routing import query_value, set_query
 
 
 def file_progress(requirements: object) -> str:
@@ -69,3 +74,71 @@ def visible_case_frame(frame: pd.DataFrame, set_no: int) -> pd.DataFrame:
             "notes": "Notes",
         }
     )
+
+
+def case_label(row: dict[str, Any] | pd.Series) -> str:
+    return (
+        f"Case {row['case_no']} · {row['status']} · "
+        f"due {row['due_date'] or '—'} · {row['files']}"
+    )
+
+
+def select_case_from_list(
+    frame: pd.DataFrame,
+    *,
+    key_prefix: str,
+    trainee_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Render a left-side case list and return the selected enriched row."""
+    if frame.empty:
+        st.info("No cases found.")
+        return None
+
+    set_no = st.radio(
+        "Set",
+        options=[1, 2],
+        format_func=lambda value: f"Set {value}",
+        horizontal=True,
+        key=f"{key_prefix}_set",
+    )
+    set_frame = frame.loc[frame["set_no"] == set_no].copy()
+    if set_frame.empty:
+        st.caption("No cases in this set.")
+        return None
+
+    rows = set_frame.to_dict(orient="records")
+    options = [row["id"] for row in rows]
+    by_id = {row["id"]: row for row in rows}
+
+    requested = query_value("case")
+    if requested in by_id:
+        index = options.index(requested)
+    else:
+        set_query(trainee=trainee_id, case=options[0])
+        st.rerun()
+
+    selected_id = st.radio(
+        "Cases",
+        options=options,
+        index=index,
+        format_func=lambda value: case_label(by_id[value]),
+        label_visibility="collapsed",
+        key=f"{key_prefix}_case_list_{set_no}",
+    )
+
+    if selected_id != query_value("case"):
+        set_query(trainee=trainee_id, case=selected_id)
+        st.rerun()
+
+    return by_id[selected_id]
+
+
+def render_case_summary(row: dict[str, Any]) -> None:
+    st.subheader(f"Set {row['set_no']} · Case {row['case_no']}")
+    st.caption(f"Case id: `{row['id']}`")
+    meta = st.columns(3)
+    meta[0].markdown(f"**Status**  \n{row['status']}")
+    meta[1].markdown(f"**Due date**  \n{row['due_date'] or '—'}")
+    meta[2].markdown(f"**Files**  \n{row['files']}")
+    if row.get("notes"):
+        st.info(row["notes"])
