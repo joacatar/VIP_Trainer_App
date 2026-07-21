@@ -1,3 +1,4 @@
+/.idea/
 /.idea/copilot.data.migration.ask2agent.xml
 /.idea/misc.xml
 /.idea/modules.xml
@@ -5,3 +6,11 @@
 /.idea/Trainer_Feedback.iml
 /.idea/vcs.xml
 /.idea/workspace.xml
+
+**/.streamlit/secrets.toml
+**/__pycache__/
+**/.venv/
+**/.pytest_cache/
+**/.ruff_cache/
+**/*.egg-info/
+*.pyc
