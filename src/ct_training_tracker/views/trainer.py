@@ -7,6 +7,7 @@ from postgrest.exceptions import APIError
 from ct_training_tracker.metrics import summarize_progress
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
+from ct_training_tracker.views.case_board import enrich_cases, visible_case_frame
 
 
 def render_dashboard(repository: TrainingRepository) -> None:
@@ -87,6 +88,62 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
     st.rerun()
 
 
+def _assign_selected_case(
+    repository: TrainingRepository,
+    frame: pd.DataFrame,
+    set_no: int,
+) -> None:
+    open_cases = frame.loc[
+        (frame["set_no"] == set_no) & (frame["raw_status"] == "not_started")
+    ]
+    if open_cases.empty:
+        st.caption("All cases in this set are already assigned.")
+        return
+
+    case_by_id = {row["id"]: row for row in open_cases.to_dict(orient="records")}
+    case_id = st.selectbox(
+        "Case to assign",
+        options=list(case_by_id),
+        format_func=lambda value: (
+            f"Case {case_by_id[value]['case_no']} · "
+            f"schedule {case_by_id[value]['schedule_due_date']}"
+        ),
+        key=f"assign_case_{set_no}",
+    )
+    selected = case_by_id[case_id]
+    schedule_due = dt.date.fromisoformat(str(selected["schedule_due_date"]))
+
+    with st.form(f"assign_case_{set_no}_{case_id}"):
+        due_date = st.date_input(
+            "Due date",
+            value=schedule_due,
+            help="Suggested from the training schedule.",
+        )
+        notes = st.text_area(
+            "Notes for trainee (optional)",
+            placeholder="Anything they should focus on for this case.",
+        )
+        submitted = st.form_submit_button("Assign case", type="primary")
+
+    if not submitted:
+        return
+
+    try:
+        repository.assign_homework(
+            case_id=case_id,
+            title=f"Set {set_no} · Case {selected['case_no']}",
+            instructions=notes,
+            schedule_due_date=schedule_due,
+            due_date=due_date,
+        )
+    except APIError as exc:
+        st.error(f"Could not assign case: {exc.message}")
+        return
+
+    st.success(f"Set {set_no} · Case {selected['case_no']} assigned.")
+    st.rerun()
+
+
 def render_cases(repository: TrainingRepository) -> None:
     st.header("Cases")
     trainees = repository.list_active_trainees()
@@ -100,9 +157,27 @@ def render_cases(repository: TrainingRepository) -> None:
         options=list(labels),
         format_func=lambda value: labels[value],
     )
-    rows = repository.list_cases(trainee_id)
-    frame = pd.DataFrame(rows).drop(columns=["id"], errors="ignore")
-    st.dataframe(frame, hide_index=True, use_container_width=True)
+    cases = repository.list_cases(trainee_id, include_files=True)
+    assignments = repository.list_homework_for_cases([row["id"] for row in cases])
+    frame = enrich_cases(cases, assignments)
+
+    set_one_tab, set_two_tab = st.tabs(["Set 1", "Set 2"])
+    with set_one_tab:
+        st.dataframe(
+            visible_case_frame(frame, 1),
+            hide_index=True,
+            use_container_width=True,
+        )
+        with st.expander("Assign a Set 1 case", expanded=False):
+            _assign_selected_case(repository, frame, 1)
+    with set_two_tab:
+        st.dataframe(
+            visible_case_frame(frame, 2),
+            hide_index=True,
+            use_container_width=True,
+        )
+        with st.expander("Assign a Set 2 case", expanded=False):
+            _assign_selected_case(repository, frame, 2)
 
 
 def render_trainer_portal(
@@ -110,10 +185,13 @@ def render_trainer_portal(
     profile: Profile,
 ) -> None:
     st.sidebar.write(f"Signed in as **{profile['full_name'] or 'Trainer'}**")
-    page = st.sidebar.radio("Navigation", ["Dashboard", "Add trainee", "Cases"])
+    page = st.sidebar.radio(
+        "Navigation",
+        ["Dashboard", "Cases", "Add trainee"],
+    )
     if page == "Dashboard":
         render_dashboard(repository)
-    elif page == "Add trainee":
-        render_trainees(repository, profile["id"])
-    else:
+    elif page == "Cases":
         render_cases(repository)
+    else:
+        render_trainees(repository, profile["id"])

@@ -1,7 +1,7 @@
 import datetime as dt
 from typing import Any, cast
 
-from ct_training_tracker.models import Profile, Trainee
+from ct_training_tracker.models import HomeworkAssignment, Profile, Trainee
 from supabase import Client
 
 
@@ -59,8 +59,8 @@ class TrainingRepository:
         include_files: bool = False,
     ) -> list[dict[str, Any]]:
         columns = (
-            "id, set_no, case_no, status, due_date, estimated_completion_date, "
-            "file_requirements(kind, status)"
+            "id, set_no, case_no, status, schedule_due_date, due_date, "
+            "estimated_completion_date, file_requirements(kind, status)"
             if include_files
             else "id, set_no, case_no, phase, status, schedule_due_date, due_date, "
             "estimated_completion_date"
@@ -93,3 +93,43 @@ class TrainingRepository:
                 "created_by": created_by,
             }
         ).execute()
+
+    def assign_homework(
+        self,
+        *,
+        case_id: str,
+        title: str,
+        instructions: str,
+        schedule_due_date: dt.date,
+        due_date: dt.date,
+    ) -> str:
+        result = self._client.rpc(
+            "assign_homework",
+            {
+                "target_case_id": case_id,
+                "homework_title": title,
+                "homework_instructions": instructions,
+                "scheduled_due": schedule_due_date.isoformat(),
+                "assigned_due": due_date.isoformat(),
+            },
+        ).execute()
+        return cast(str, result.data)
+
+    def list_homework_for_cases(
+        self,
+        case_ids: list[str],
+    ) -> list[HomeworkAssignment]:
+        if not case_ids:
+            return []
+        result = (
+            self._client.table("homework_assignments")
+            .select(
+                "id, case_id, title, instructions, status, schedule_due_date, "
+                "due_date, estimated_due_date, cases(set_no, case_no)"
+            )
+            .in_("case_id", case_ids)
+            .neq("status", "cancelled")
+            .order("due_date")
+            .execute()
+        )
+        return cast(list[HomeworkAssignment], result.data or [])
