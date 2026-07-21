@@ -26,7 +26,8 @@ Exit criteria:
 
 ## 2. Homework and file submissions
 
-Status: next
+Status: in progress — homework assignment and trainee visibility implemented;
+versioned file uploads are next
 
 Implementation order:
 

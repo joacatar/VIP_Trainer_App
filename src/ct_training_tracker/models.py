@@ -12,3 +12,20 @@ class Trainee(TypedDict):
     full_name: str
     current_phase: str
     start_date: str
+
+
+class HomeworkCase(TypedDict):
+    set_no: int
+    case_no: int
+
+
+class HomeworkAssignment(TypedDict):
+    id: str
+    case_id: str
+    title: str
+    instructions: str | None
+    status: str
+    schedule_due_date: str
+    due_date: str
+    estimated_due_date: str | None
+    cases: HomeworkCase
