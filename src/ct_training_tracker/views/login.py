@@ -2,9 +2,9 @@ from collections.abc import MutableMapping
 from typing import Any
 
 import streamlit as st
-from supabase import Client
 
 from ct_training_tracker.auth import store_login
+from supabase import Client
 
 
 def render_login(client: Client, session: MutableMapping[str, Any]) -> None:

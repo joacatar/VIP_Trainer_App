@@ -1,9 +1,8 @@
 import datetime as dt
 from typing import Any, cast
 
-from supabase import Client
-
 from ct_training_tracker.models import Profile, Trainee
+from supabase import Client
 
 
 class TrainingRepository:
@@ -20,7 +19,7 @@ class TrainingRepository:
             .maybe_single()
             .execute()
         )
-        return cast(Profile | None, result.data)
+        return cast(Profile | None, result.data if result is not None else None)
 
     def list_progress(self) -> list[dict[str, Any]]:
         result = (
@@ -51,7 +50,7 @@ class TrainingRepository:
             .maybe_single()
             .execute()
         )
-        return cast(Trainee | None, result.data)
+        return cast(Trainee | None, result.data if result is not None else None)
 
     def list_cases(
         self,

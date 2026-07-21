@@ -5,9 +5,8 @@ Streamlit and Supabase foundation for CT disposition and CT planning training.
 ## Project structure
 
 ```text
-ct_training_tracker/
-├── app.py                         # Thin Streamlit entrypoint
-├── pyproject.toml                 # Package and tool configuration
+vip_trainer_app/
+├── streamlit_app.py               # CT tracker Streamlit entrypoint
 ├── src/ct_training_tracker/
 │   ├── application.py             # Application orchestration
 │   ├── auth.py                    # Authentication/session lifecycle
@@ -16,7 +15,12 @@ ct_training_tracker/
 │   ├── models.py                  # Shared application types
 │   ├── repository.py              # Supabase data-access boundary
 │   └── views/                     # Trainer, trainee, and login UI
-└── tests/                         # Unit tests
+├── tests/                         # CT tracker unit tests
+├── supabase/migrations/           # Database migrations
+├── docs/implementation-plan.md    # Milestone plan and exit criteria
+├── pyproject.toml                 # Package and tool configuration
+├── app.py                         # Legacy peer-feedback Flask app
+└── APAC INTEGRATION/              # Existing schedule dashboard
 ```
 
 Streamlit views do not issue database queries directly. Data access stays behind
@@ -62,14 +66,14 @@ Streamlit and Supabase.
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-streamlit run app.py
+streamlit run streamlit_app.py
 ```
 
 For development:
 
 ```bash
 pip install -r requirements-dev.txt
-ruff check .
+ruff check src tests streamlit_app.py
 pytest
 ```
 

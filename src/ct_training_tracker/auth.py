@@ -1,9 +1,8 @@
 from collections.abc import MutableMapping
 from typing import Any
 
-from supabase import Client, create_client
-
 from ct_training_tracker.config import SupabaseSettings
+from supabase import Client, create_client
 
 SESSION_KEYS = ("access_token", "refresh_token", "user_id")
 

@@ -1,10 +1,12 @@
 # Step-by-step implementation plan
 
 Each milestone should be usable and verified before starting the next one.
+We implement and review one numbered milestone at a time; the MVP is not built in
+one unreviewed batch.
 
 ## 1. Tracking foundation
 
-Status: implemented locally; remote Supabase application pending
+Status: complete locally and applied to the `VIP Trainer` Supabase project
 
 - Supabase Auth roles for trainer and trainee
 - Trainee records and APAC-derived working-day schedule
@@ -24,6 +26,17 @@ Exit criteria:
 
 ## 2. Homework and file submissions
 
+Status: next
+
+Implementation order:
+
+1. Trainer account bootstrap and trainee invitation/linking.
+2. Trainer homework form with schedule-derived, overridable due date.
+3. Trainee case page with separate PDF 1, PDF 2, and OV upload slots.
+4. Versioned private Storage upload and download.
+5. Trainer accept/reject decision for each file independently.
+6. Status transitions and “waiting on trainer/trainee” dashboard indicators.
+
 - Trainer sends homework with suggested and overridable due dates.
 - Trainee uploads two PDFs and one OV into separate versioned slots.
 - Trainer downloads, accepts, or requests replacement for each file separately.
@@ -38,6 +51,8 @@ Exit criteria:
 
 ## 3. Revisions and corrections
 
+Status: pending until milestone 2 is reviewed
+
 - Eight fixed review sections
 - Multiple corrections per section
 - Severity, status, trainer notes, and pasted screenshots
@@ -51,6 +66,8 @@ Exit criteria:
 
 ## 4. Questions
 
+Status: pending until milestone 3 is reviewed
+
 - Case/revision/section-linked trainee question threads
 - Trainer unanswered-question inbox
 - Screenshot attachments and resolved status
@@ -62,6 +79,8 @@ Exit criteria:
 - Questions cannot be lost inside free-form correction notes.
 
 ## 5. Metrics and forecasting
+
+Status: pending until milestone 4 is reviewed
 
 - First-pass file acceptance
 - Revision and resubmission counts
@@ -76,6 +95,8 @@ Exit criteria:
 - The dashboard explains the inputs behind each completion estimate.
 
 ## 6. Later features
+
+Status: backlog
 
 - Private trainee notebook
 - APAC dashboard consolidation

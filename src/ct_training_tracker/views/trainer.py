@@ -53,8 +53,7 @@ def render_dashboard(repository: TrainingRepository) -> None:
 
 
 def render_trainees(repository: TrainingRepository, user_id: str) -> None:
-    st.header("Trainees")
-    st.subheader("Add trainee")
+    st.header("Add trainee")
     with st.form("add_trainee", clear_on_submit=True):
         left, middle, right = st.columns(3)
         full_name = left.text_input("Full name")
@@ -102,7 +101,8 @@ def render_cases(repository: TrainingRepository) -> None:
         format_func=lambda value: labels[value],
     )
     rows = repository.list_cases(trainee_id)
-    st.dataframe(pd.DataFrame(rows), hide_index=True, use_container_width=True)
+    frame = pd.DataFrame(rows).drop(columns=["id"], errors="ignore")
+    st.dataframe(frame, hide_index=True, use_container_width=True)
 
 
 def render_trainer_portal(
@@ -110,10 +110,10 @@ def render_trainer_portal(
     profile: Profile,
 ) -> None:
     st.sidebar.write(f"Signed in as **{profile['full_name'] or 'Trainer'}**")
-    page = st.sidebar.radio("Navigation", ["Dashboard", "Trainees", "Cases"])
+    page = st.sidebar.radio("Navigation", ["Dashboard", "Add trainee", "Cases"])
     if page == "Dashboard":
         render_dashboard(repository)
-    elif page == "Trainees":
+    elif page == "Add trainee":
         render_trainees(repository, profile["id"])
     else:
         render_cases(repository)
