@@ -52,7 +52,7 @@ def test_waiting_label_summarizes_next_action() -> None:
                 "overdue_cases": 3,
             }
         )
-        == "Sent files to review: 2 · Files to send: 1 · Overdue tasks: 3"
+        == "Packages in review: 2 · Files to send: 1 · Overdue tasks: 3"
     )
     assert waiting_label({"waiting_on_trainer": 0, "waiting_on_trainee": 0}) == "Clear"
 
@@ -60,7 +60,7 @@ def test_waiting_label_summarizes_next_action() -> None:
 def test_count_file_waiting_uses_to_send_sent_accepted() -> None:
     cases = [
         {
-            "status": "submitted",
+            "status": "assigned",
             "file_requirements": [
                 {"status": "submitted"},
                 {"status": "submitted"},
@@ -86,7 +86,7 @@ def test_count_file_waiting_uses_to_send_sent_accepted() -> None:
 def test_count_tasks_separates_open_and_with_trainer() -> None:
     cases = [
         {"status": "assigned", "due_date": "2099-01-01"},
-        {"status": "submitted", "due_date": "2099-01-01"},
+        {"status": "in_review", "due_date": "2099-01-01"},
         {"status": "approved", "due_date": "2099-01-01"},
         {"status": "assigned", "due_date": "2020-01-01"},
     ]

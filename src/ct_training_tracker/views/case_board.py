@@ -12,25 +12,32 @@ from ct_training_tracker.routing import query_value, set_query
 
 def file_progress(requirements: object) -> str:
     if not isinstance(requirements, list):
-        return "0 sent · 3 to send"
-    sent = 0
+        return "0 ready · 3 to send"
+    ready = 0
     accepted = 0
     to_send = 0
+    with_trainer = 0
     for requirement in requirements:
         if not isinstance(requirement, dict):
             continue
         status = requirement.get("status")
         if status == "accepted":
             accepted += 1
-        elif status in {"submitted", "under_review"}:
-            sent += 1
+        elif status == "under_review":
+            with_trainer += 1
+        elif status == "submitted":
+            ready += 1
         elif status in {"missing", "replacement_requested"}:
             to_send += 1
+    if with_trainer:
+        return f"{with_trainer}/3 with trainer"
     if to_send:
-        return f"{sent + accepted} sent · {to_send} to send"
+        return f"{ready + accepted} ready · {to_send} to send"
     if accepted == 3:
         return "3/3 accepted"
-    return f"{sent} sent · {accepted} accepted"
+    if ready == 3:
+        return "3/3 ready — submit package"
+    return f"{ready} ready · {accepted} accepted"
 
 
 def homework_by_case_id(
@@ -147,10 +154,9 @@ def select_case_from_list(
 
 def render_case_summary(row: dict[str, Any]) -> None:
     st.subheader(f"Set {row['set_no']} · Case {row['case_no']}")
-    st.caption(f"Case id: `{row['id']}`")
     meta = st.columns(3)
     meta[0].markdown(f"**Status**  \n{row['status']}")
-    meta[1].markdown(f"**Due date**  \n{row['due_date'] or '—'}")
+    meta[1].markdown(f"**Due**  \n{row['due_date'] or '—'}")
     meta[2].markdown(f"**Files**  \n{row['files']}")
     if row.get("notes"):
-        st.info(row["notes"])
+        st.caption(row["notes"])

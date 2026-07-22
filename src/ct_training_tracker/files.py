@@ -4,12 +4,19 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 FILE_KIND_LABELS = {
     "pdf_primary": "PDF 1",
     "pdf_secondary": "PDF 2",
     "ov": "OV",
 }
+
+READY_SLOT_STATUSES = frozenset({"submitted", "under_review"})
+PACKAGE_EDITABLE_STATUSES = frozenset(
+    {"assigned", "submitted", "awaiting_resubmission"}
+)
+PACKAGE_WITH_TRAINER_STATUSES = frozenset({"in_review", "corrections_sent"})
 
 ALLOWED_EXTENSIONS = {
     "pdf_primary": (".pdf",),
@@ -19,6 +26,32 @@ ALLOWED_EXTENSIONS = {
 }
 
 SCREENSHOT_EXTENSIONS = (".png", ".jpg", ".jpeg", ".webp", ".gif")
+
+
+def slot_is_ready(status: str) -> bool:
+    return status in READY_SLOT_STATUSES
+
+
+def count_ready_slots(requirements: list[dict[str, Any]]) -> int:
+    return sum(
+        1
+        for row in requirements
+        if isinstance(row, dict) and slot_is_ready(str(row.get("status") or ""))
+    )
+
+
+def can_submit_package(
+    case_status: str,
+    requirements: list[dict[str, Any]],
+) -> bool:
+    if case_status not in PACKAGE_EDITABLE_STATUSES:
+        return False
+    if any(
+        isinstance(row, dict) and row.get("status") == "replacement_requested"
+        for row in requirements
+    ):
+        return False
+    return count_ready_slots(requirements) >= 3
 
 
 def sanitize_filename(filename: str) -> str:

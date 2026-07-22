@@ -292,24 +292,69 @@ class TrainingRepository:
             },
         ).execute()
 
+    def submit_case_for_review(self, case_id: str) -> None:
+        self._client.rpc(
+            "submit_case_for_review",
+            {"target_case_id": case_id},
+        ).execute()
+
+    def get_trainer_display_name_for_trainee(
+        self,
+        trainee_id: str,
+    ) -> str | None:
+        result = (
+            self._client.table("trainees")
+            .select("created_by")
+            .eq("id", trainee_id)
+            .maybe_single()
+            .execute()
+        )
+        if result is None or not result.data:
+            return None
+        created_by = result.data.get("created_by")
+        if not created_by:
+            return None
+        profile = self.get_profile(str(created_by))
+        if not profile:
+            return None
+        name = (profile.get("full_name") or "").strip()
+        return name or None
+
     def create_signed_download_url(
         self,
         storage_path: str,
         *,
-        expires_in: int = 300,
+        expires_in: int = 3600,
     ) -> str:
         result = self._client.storage.from_(CASE_FILES_BUCKET).create_signed_url(
             storage_path,
             expires_in,
         )
-        url = (
-            result.get("signedURL")
-            or result.get("signedUrl")
-            or result.get("signed_url")
-        )
+        if isinstance(result, dict):
+            nested = result.get("data")
+            if isinstance(nested, dict):
+                result = {**result, **nested}
+            url = (
+                result.get("signedURL")
+                or result.get("signedUrl")
+                or result.get("signed_url")
+            )
+        else:
+            url = None
         if not url:
             raise RuntimeError("Could not create a download link.")
         return cast(str, url)
+
+    def download_storage_bytes(self, storage_path: str) -> bytes:
+        """Download a private Storage object using the session client."""
+        payload = self._client.storage.from_(CASE_FILES_BUCKET).download(
+            storage_path
+        )
+        if isinstance(payload, (bytes, bytearray)):
+            return bytes(payload)
+        if isinstance(payload, memoryview):
+            return payload.tobytes()
+        raise RuntimeError(f"Unexpected storage download payload for {storage_path}")
 
     def list_revisions_for_case(
         self,

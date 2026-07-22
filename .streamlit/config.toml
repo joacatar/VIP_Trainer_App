@@ -2,3 +2,34 @@
 # OV / Arthrex plans can be large. Keep message size >= upload size.
 maxUploadSize = 1024
 maxMessageSize = 1024
+
+[theme]
+base = "light"
+primaryColor = "#0f766e"
+backgroundColor = "#f8fafc"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+linkColor = "#0f766e"
+borderColor = "#e2e8f0"
+font = "sans serif"
+baseFontSize = 15
+headingFontSizes = ["1.75rem", "1.35rem", "1.15rem", "1.05rem", "1rem", "0.95rem"]
+
+redColor = "#dc2626"
+orangeColor = "#d97706"
+yellowColor = "#ca8a04"
+greenColor = "#16a34a"
+blueColor = "#0284c8"
+violetColor = "#7c3aed"
+grayColor = "#64748b"
+
+greenBackgroundColor = "#dcfce7"
+greenTextColor = "#166534"
+orangeBackgroundColor = "#ffedd5"
+orangeTextColor = "#9a3412"
+redBackgroundColor = "#fee2e2"
+redTextColor = "#991b1b"
+blueBackgroundColor = "#e0f2fe"
+blueTextColor = "#075985"
+grayBackgroundColor = "#f1f5f9"
+grayTextColor = "#475569"

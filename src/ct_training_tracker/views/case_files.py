@@ -8,19 +8,18 @@ from urllib.parse import urlparse
 import streamlit as st
 from postgrest.exceptions import APIError
 
-from ct_training_tracker.files import FILE_KIND_LABELS
+from ct_training_tracker.files import (
+    FILE_KIND_LABELS,
+    PACKAGE_EDITABLE_STATUSES,
+    PACKAGE_WITH_TRAINER_STATUSES,
+    READY_SLOT_STATUSES,
+    can_submit_package,
+    count_ready_slots,
+)
 from ct_training_tracker.metrics import file_slot_label
 from ct_training_tracker.repository import TrainingRepository
 
-EDITABLE_CASE_STATUSES = {
-    "assigned",
-    "submitted",
-    "awaiting_resubmission",
-    "in_review",
-    "corrections_sent",
-}
 KIND_ORDER = ("pdf_primary", "pdf_secondary", "ov")
-SENT_STATUSES = {"submitted", "under_review"}
 
 
 def _sorted_requirements(requirements: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -43,18 +42,44 @@ def render_trainee_case_uploads(
     *,
     user_id: str,
     case: dict[str, Any],
+    trainer_name: str | None = None,
 ) -> None:
     del user_id  # Auth comes from the session client / RPC.
-    if case["status"] not in EDITABLE_CASE_STATUSES:
+    status = case["status"]
+    if status not in PACKAGE_EDITABLE_STATUSES | PACKAGE_WITH_TRAINER_STATUSES:
         st.caption(
             "This case is not ready for file links yet "
-            f"(status: {str(case['status']).replace('_', ' ')})."
+            f"(status: {str(status).replace('_', ' ')})."
         )
         return
 
     requirements = _sorted_requirements(
         repository.list_requirements_for_case(case["id"])
     )
+    ready = count_ready_slots(requirements)
+    reviewer = (trainer_name or "").strip() or "Your trainer"
+
+    if status in PACKAGE_WITH_TRAINER_STATUSES:
+        st.success(
+            "Submitted for review",
+            icon=":material/hourglass_top:",
+        )
+        st.caption(f"{reviewer} is reviewing — please wait.")
+        for requirement in requirements:
+            label = FILE_KIND_LABELS[requirement["kind"]]
+            current_url = requirement.get("external_url") or ""
+            with st.container(border=True):
+                left, right = st.columns([2, 1])
+                left.markdown(f"**{label}**")
+                right.badge("With trainer", color="blue")
+                if current_url:
+                    st.link_button("Open link", current_url)
+                else:
+                    st.caption("No link on file.")
+        return
+
+    st.caption(f"Package progress: {ready}/3 ready")
+
     for requirement in requirements:
         label = FILE_KIND_LABELS[requirement["kind"]]
         slot_state = file_slot_label(requirement["status"])
@@ -62,31 +87,43 @@ def render_trainee_case_uploads(
         current_url = requirement.get("external_url") or ""
 
         with st.container(border=True):
-            st.markdown(f"**{label}** · {slot_state}")
+            head = st.columns([2, 1])
+            head[0].markdown(f"**{label}**")
+            if requirement["status"] == "accepted":
+                head[1].badge("Accepted", color="green")
+            elif requirement["status"] in READY_SLOT_STATUSES:
+                head[1].badge("Ready", color="blue")
+            elif requirement["status"] == "replacement_requested":
+                head[1].badge("Replace", color="orange")
+            else:
+                head[1].badge(slot_state, color="gray")
+
             if requirement.get("replacement_reason"):
                 st.warning(requirement["replacement_reason"])
 
             if requirement["status"] == "accepted":
                 if current_url:
-                    st.link_button("Open OneDrive link", current_url)
-                st.success("Accepted — nothing else to send for this slot.")
+                    st.link_button("Open link", current_url)
+                st.caption("Nothing else to send for this slot.")
                 continue
 
-            st.caption("Paste a OneDrive share link, then mark as sent.")
             url_value = st.text_input(
                 f"{label} OneDrive link",
                 value=current_url,
                 key=f"link_{requirement_id}",
                 placeholder="https://…onedrive…/…",
+                label_visibility="collapsed",
             )
+            st.caption("OneDrive share link")
 
-            if requirement["status"] in SENT_STATUSES:
-                st.success("Sent — waiting for trainer review.")
+            if requirement["status"] in READY_SLOT_STATUSES:
+                actions = st.columns(2)
                 if current_url:
-                    st.link_button("Open current link", current_url)
-                if st.button(
-                    f"Undo sent · {label}",
+                    actions[0].link_button("Open link", current_url)
+                if actions[1].button(
+                    "Undo",
                     key=f"unmark_{requirement_id}",
+                    width="stretch",
                 ):
                     try:
                         repository.unmark_file_sent(requirement_id)
@@ -97,9 +134,10 @@ def render_trainee_case_uploads(
                 continue
 
             if st.button(
-                f"Mark {label} as sent",
+                f"Mark {label} ready",
                 key=f"mark_{requirement_id}",
                 type="primary",
+                width="stretch",
             ):
                 try:
                     cleaned = (
@@ -115,8 +153,26 @@ def render_trainee_case_uploads(
                     message = getattr(exc, "message", None) or str(exc)
                     st.error(message)
                 else:
-                    st.success(f"{label} marked as sent.")
+                    st.toast(f"{label} ready")
                     st.rerun()
+
+    if can_submit_package(status, requirements):
+        if st.button(
+            "Notify trainer for review",
+            key=f"submit_package_{case['id']}",
+            type="primary",
+            width="stretch",
+            icon=":material/send:",
+        ):
+            try:
+                repository.submit_case_for_review(case["id"])
+            except APIError as exc:
+                st.error(exc.message)
+            else:
+                st.toast("Submitted for review")
+                st.rerun()
+    elif status in PACKAGE_EDITABLE_STATUSES:
+        st.caption("Mark all three slots ready before notifying the trainer.")
 
 
 def render_trainer_case_review(
@@ -134,6 +190,16 @@ def render_trainer_case_review(
         st.caption("Assign this case before reviewing files.")
         return
 
+    if case["status"] in PACKAGE_WITH_TRAINER_STATUSES:
+        st.caption(
+            "Open links, then review in the Review tab. "
+            "Send back only if a file is wrong."
+        )
+    elif case["status"] == "awaiting_resubmission":
+        st.caption("Waiting for the trainee to fix and resubmit.")
+    else:
+        st.caption("Trainee is still preparing the package.")
+
     requirements = _sorted_requirements(
         repository.list_requirements_for_case(case["id"])
     )
@@ -144,18 +210,28 @@ def render_trainer_case_review(
         latest = requirement.get("latest_file")
 
         with st.container(border=True):
-            st.markdown(f"**{label}** · {slot_state}")
+            head = st.columns([2, 1])
+            head[0].markdown(f"**{label}**")
+            if requirement["status"] == "accepted":
+                head[1].badge("Accepted", color="green")
+            elif requirement["status"] in READY_SLOT_STATUSES:
+                head[1].badge(slot_state, color="blue")
+            elif requirement["status"] == "replacement_requested":
+                head[1].badge("Replace", color="orange")
+            else:
+                head[1].badge(slot_state, color="gray")
+
             if requirement.get("replacement_reason"):
-                st.caption(f"Last note: {requirement['replacement_reason']}")
+                st.caption(requirement["replacement_reason"])
 
             if url:
-                st.link_button("Open OneDrive link", url)
+                st.link_button("Open link", url)
             elif latest:
                 try:
                     download_url = repository.create_signed_download_url(
                         latest["storage_path"]
                     )
-                    st.link_button("Download (legacy upload)", download_url)
+                    st.link_button("Download (legacy)", download_url)
                 except Exception as exc:
                     st.error(f"Download unavailable: {exc}")
             else:
@@ -163,36 +239,29 @@ def render_trainer_case_review(
                 continue
 
             if requirement["status"] == "accepted":
-                st.success("Already accepted.")
                 continue
 
-            if requirement["status"] not in SENT_STATUSES | {"replacement_requested"}:
+            if requirement["status"] not in READY_SLOT_STATUSES | {
+                "replacement_requested"
+            }:
+                continue
+
+            if case["status"] not in PACKAGE_WITH_TRAINER_STATUSES | {
+                "awaiting_resubmission"
+            }:
                 continue
 
             note = st.text_input(
-                "Review note",
+                "Replacement note",
                 key=f"review_note_{requirement['id']}",
-                placeholder="Optional note for replacement requests",
+                placeholder="Why this slot needs to be resent",
+                label_visibility="collapsed",
             )
-            accept_col, reject_col = st.columns(2)
-            if accept_col.button(
-                f"Accept {label}",
-                key=f"accept_{requirement['id']}",
-            ):
-                try:
-                    repository.review_file_requirement(
-                        requirement_id=requirement["id"],
-                        decision="accepted",
-                        note=note,
-                    )
-                except APIError as exc:
-                    st.error(exc.message)
-                    continue
-                st.success(f"{label} accepted.")
-                st.rerun()
-            if reject_col.button(
-                "Request replacement",
+            st.caption("Optional note if requesting replacement")
+            if st.button(
+                f"Request replacement · {label}",
                 key=f"reject_{requirement['id']}",
+                width="stretch",
             ):
                 try:
                     repository.review_file_requirement(
@@ -203,5 +272,5 @@ def render_trainer_case_review(
                 except APIError as exc:
                     st.error(exc.message)
                     continue
-                st.warning(f"{label} marked for replacement.")
+                st.toast(f"{label} sent back")
                 st.rerun()
