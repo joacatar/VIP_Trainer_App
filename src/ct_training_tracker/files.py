@@ -12,9 +12,10 @@ FILE_KIND_LABELS = {
 }
 
 ALLOWED_EXTENSIONS = {
-    "pdf_primary": {".pdf"},
-    "pdf_secondary": {".pdf"},
-    "ov": {".ov"},
+    "pdf_primary": (".pdf",),
+    "pdf_secondary": (".pdf",),
+    # Compound Arthrex extension — match by endswith, not Path.suffix alone.
+    "ov": (".ov-arthrex",),
 }
 
 
@@ -24,12 +25,19 @@ def sanitize_filename(filename: str) -> str:
     return cleaned or "upload.bin"
 
 
+def extension_matches(filename: str, allowed: tuple[str, ...]) -> bool:
+    lowered = Path(filename).name.lower()
+    return any(lowered.endswith(ext.lower()) for ext in allowed)
+
+
 def validate_upload(kind: str, filename: str) -> str:
-    extension = Path(filename).suffix.lower()
-    allowed = ALLOWED_EXTENSIONS.get(kind, set())
-    if extension not in allowed:
-        labels = ", ".join(sorted(allowed))
-        raise ValueError(f"{FILE_KIND_LABELS.get(kind, kind)} must be {labels}")
+    allowed = ALLOWED_EXTENSIONS.get(kind, ())
+    if not allowed or not extension_matches(filename, allowed):
+        labels = ", ".join(sorted(allowed)) or "an allowed type"
+        raise ValueError(
+            f"{FILE_KIND_LABELS.get(kind, kind)} must end with {labels} "
+            f"(got {Path(filename).name!r})"
+        )
     return sanitize_filename(filename)
 
 

@@ -1,0 +1,4 @@
+[server]
+# OV / Arthrex plans can be large. Keep message size >= upload size.
+maxUploadSize = 1024
+maxMessageSize = 1024

@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 from postgrest.exceptions import APIError
 
-from ct_training_tracker.metrics import summarize_progress
+from ct_training_tracker.metrics import summarize_progress, waiting_label
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.routing import query_value, set_query
@@ -27,15 +27,59 @@ def render_dashboard(repository: TrainingRepository) -> None:
     totals = summarize_progress(rows)
     columns = st.columns(4)
     columns[0].metric(
-        "Case progress",
+        "Tasks done",
         f"{totals.approved_cases}/{totals.total_cases}",
+        help="Approved cases out of all cases.",
     )
     columns[1].metric(
-        "Files accepted",
-        f"{totals.accepted_files}/{totals.total_files}",
+        "Overdue tasks",
+        totals.overdue_cases,
+        help="Cases past due date that are not approved yet.",
     )
-    columns[2].metric("Overdue cases", totals.overdue_cases)
-    columns[3].metric("Active trainees", totals.trainees)
+    columns[2].metric(
+        "Files sent to review",
+        totals.waiting_on_trainer,
+        help="File slots trainees already sent that need your decision.",
+    )
+    columns[3].metric(
+        "Files still to send",
+        totals.waiting_on_trainee,
+        help="File slots trainees still need to upload or replace.",
+    )
+
+    attention = [
+        row
+        for row in rows
+        if int(row.get("waiting_on_trainer", 0))
+        or int(row.get("waiting_on_trainee", 0))
+        or int(row.get("overdue_cases", 0))
+    ]
+    st.subheader("Needs attention")
+    if not attention:
+        st.success("Nothing waiting right now.")
+    else:
+        for row in sorted(
+            attention,
+            key=lambda item: (
+                -int(item.get("waiting_on_trainer", 0)),
+                -int(item.get("overdue_cases", 0)),
+                -int(item.get("waiting_on_trainee", 0)),
+            ),
+        ):
+            left, right = st.columns([2.4, 1])
+            left.markdown(
+                f"**{row['full_name']}**  \n"
+                f"{waiting_label(row)}"
+            )
+            if right.button(
+                "Open cases",
+                key=f"open_cases_{row['trainee_id']}",
+                width="stretch",
+            ):
+                st.switch_page(
+                    "app_pages/trainer_cases.py",
+                    query_params={"trainee": row["trainee_id"]},
+                )
 
     frame = pd.DataFrame(rows)
     frame["case_progress"] = (
@@ -44,6 +88,7 @@ def render_dashboard(repository: TrainingRepository) -> None:
     frame["file_progress"] = (
         frame["accepted_files"].astype(str) + " / " + frame["total_files"].astype(str)
     )
+    frame["waiting"] = frame.apply(waiting_label, axis=1)
     st.dataframe(
         frame[
             [
@@ -51,18 +96,33 @@ def render_dashboard(repository: TrainingRepository) -> None:
                 "current_phase",
                 "case_progress",
                 "file_progress",
+                "waiting",
+                "waiting_on_trainer",
+                "waiting_on_trainee",
                 "overdue_cases",
                 "estimated_completion_date",
             ]
-        ],
+        ].rename(
+            columns={
+                "full_name": "Trainee",
+                "current_phase": "Phase",
+                "case_progress": "Cases",
+                "file_progress": "Files",
+                "waiting": "Next action",
+                "waiting_on_trainer": "Sent to review",
+                "waiting_on_trainee": "Still to send",
+                "overdue_cases": "Overdue tasks",
+                "estimated_completion_date": "Est. completion",
+            }
+        ),
         hide_index=True,
-        use_container_width=True,
+        width="stretch",
     )
 
 
 def render_trainees(repository: TrainingRepository, user_id: str) -> None:
     st.header("Add trainee")
-    st.caption("Path: `/trainer/trainees`")
+    st.caption("Path: `/trainer-trainees`")
     with st.form("add_trainee", clear_on_submit=True):
         left, middle, right = st.columns(3)
         full_name = left.text_input("Full name")
@@ -134,7 +194,7 @@ def _assign_case(repository: TrainingRepository, *, case_row: dict) -> None:
 
 def render_cases(repository: TrainingRepository) -> None:
     st.header("Cases")
-    st.caption("Path: `/trainer/cases?trainee=…&case=…`")
+    st.caption("Path: `/trainer-cases?trainee=…&case=…`")
     trainees = repository.list_active_trainees()
     if not trainees:
         st.info("Add a trainee first.")

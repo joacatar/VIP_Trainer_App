@@ -29,7 +29,8 @@ class TrainingRepository:
             self._client.table("trainee_progress")
             .select(
                 "trainee_id, full_name, current_phase, total_cases, approved_cases, "
-                "overdue_cases, total_files, accepted_files, estimated_completion_date"
+                "overdue_cases, waiting_on_trainer, waiting_on_trainee, "
+                "total_files, accepted_files, estimated_completion_date"
             )
             .execute()
         )
@@ -193,14 +194,31 @@ class TrainingRepository:
             version_no=version_no,
             filename=safe_name,
         )
-        self._client.storage.from_(CASE_FILES_BUCKET).upload(
-            object_path,
-            content,
-            file_options={
-                "content-type": mime_type or "application/octet-stream",
-                "upsert": "false",
-            },
-        )
+        try:
+            self._client.storage.from_(CASE_FILES_BUCKET).upload(
+                object_path,
+                content,
+                file_options={
+                    "content-type": mime_type or "application/octet-stream",
+                    "upsert": "false",
+                },
+            )
+        except Exception as exc:
+            message = str(getattr(exc, "message", None) or exc)
+            lowered = message.lower()
+            if (
+                "maximum allowed size" in lowered
+                or "entitytoolarge" in lowered
+                or "payload too large" in lowered
+            ):
+                size_mb = len(content) / (1024 * 1024)
+                raise ValueError(
+                    f"Supabase Storage rejected this file ({size_mb:.1f} MB). "
+                    "Raise Storage → Settings → Global file size limit "
+                    "(Free plan max is 50 MB; Pro can go much higher). "
+                    "Bucket limit alone is not enough."
+                ) from exc
+            raise
         try:
             result = self._client.rpc(
                 "register_case_file",

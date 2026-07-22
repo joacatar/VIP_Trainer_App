@@ -57,13 +57,13 @@ def run() -> None:
                 "app_pages/trainer_cases.py",
                 title="Cases",
                 icon=":material/folder_open:",
-                url_path="trainer/cases",
+                url_path="trainer-cases",
             ),
             st.Page(
                 "app_pages/trainer_add_trainee.py",
                 title="Add trainee",
                 icon=":material/person_add:",
-                url_path="trainer/trainees",
+                url_path="trainer-trainees",
             ),
         ]
     else:

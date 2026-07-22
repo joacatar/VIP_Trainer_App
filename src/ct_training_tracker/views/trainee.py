@@ -1,5 +1,6 @@
 import streamlit as st
 
+from ct_training_tracker.metrics import count_file_waiting, count_tasks
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.views.case_board import (
@@ -26,7 +27,26 @@ def render_trainee_portal(
 
     cases = repository.list_cases(trainee["id"], include_files=True)
     current_phase = trainee["current_phase"].replace("_", " ").title()
+    tasks = count_tasks(cases)
     st.caption(f"Current phase: {current_phase}")
+
+    st.markdown("##### Tasks")
+    task_cols = st.columns(3)
+    task_cols[0].metric(
+        "Open tasks",
+        tasks.open_tasks,
+        help="Assigned cases where you still need to act.",
+    )
+    task_cols[1].metric(
+        "With trainer",
+        tasks.with_trainer,
+        help="Cases already submitted and waiting on trainer review.",
+    )
+    task_cols[2].metric(
+        "Approved",
+        tasks.approved,
+        help="Cases the trainer has fully approved.",
+    )
 
     assignments = repository.list_homework_for_cases([row["id"] for row in cases])
     frame = enrich_cases(cases, assignments)
@@ -48,9 +68,18 @@ def render_trainee_portal(
             return
 
         render_case_summary(selected)
+        case = cases_by_id[selected["id"]]
+        file_counts = count_file_waiting([case])
+
         st.markdown("##### Files")
+        st.caption("PDF 1, PDF 2, and OV for this case.")
+        file_cols = st.columns(3)
+        file_cols[0].metric("To send", file_counts.to_send)
+        file_cols[1].metric("Sent", file_counts.sent)
+        file_cols[2].metric("Accepted", file_counts.accepted)
+
         render_trainee_case_uploads(
             repository,
             user_id=profile["id"],
-            case=cases_by_id[selected["id"]],
+            case=case,
         )
