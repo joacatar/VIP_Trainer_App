@@ -9,6 +9,7 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainee_case_uploads
+from ct_training_tracker.views.revisions import render_trainee_revisions
 
 
 def render_trainee_portal(
@@ -40,7 +41,7 @@ def render_trainee_portal(
     task_cols[1].metric(
         "With trainer",
         tasks.with_trainer,
-        help="Cases already submitted and waiting on trainer review.",
+        help="Packages submitted for review (trainer is working on them).",
     )
     task_cols[2].metric(
         "Approved",
@@ -71,15 +72,29 @@ def render_trainee_portal(
         case = cases_by_id[selected["id"]]
         file_counts = count_file_waiting([case])
 
-        st.markdown("##### Files")
-        st.caption("PDF 1, PDF 2, and OV for this case.")
-        file_cols = st.columns(3)
-        file_cols[0].metric("To send", file_counts.to_send)
-        file_cols[1].metric("Sent", file_counts.sent)
-        file_cols[2].metric("Accepted", file_counts.accepted)
-
-        render_trainee_case_uploads(
-            repository,
-            user_id=profile["id"],
-            case=case,
+        files_tab, review_tab = st.tabs(
+            [
+                ":material/folder: Files",
+                ":material/rate_review: Feedback",
+            ]
         )
+        with files_tab:
+            st.caption(
+                "Paste OneDrive links, mark ready, then notify the trainer."
+            )
+            file_cols = st.columns(3)
+            file_cols[0].metric("To send", file_counts.to_send)
+            file_cols[1].metric("Ready", file_counts.sent)
+            file_cols[2].metric("Accepted", file_counts.accepted)
+
+            trainer_name = repository.get_trainer_display_name_for_trainee(
+                trainee["id"]
+            )
+            render_trainee_case_uploads(
+                repository,
+                user_id=profile["id"],
+                case=case,
+                trainer_name=trainer_name,
+            )
+        with review_tab:
+            render_trainee_revisions(repository, case=case)

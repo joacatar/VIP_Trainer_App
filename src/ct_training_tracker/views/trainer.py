@@ -14,6 +14,7 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainer_case_review
+from ct_training_tracker.views.revisions import render_trainer_revisions
 
 
 def render_dashboard(repository: TrainingRepository) -> None:
@@ -37,14 +38,14 @@ def render_dashboard(repository: TrainingRepository) -> None:
         help="Cases past due date that are not approved yet.",
     )
     columns[2].metric(
-        "Files sent to review",
+        "Packages in review",
         totals.waiting_on_trainer,
-        help="File slots trainees already sent that need your decision.",
+        help="Cases submitted for review that need your revision or send-back.",
     )
     columns[3].metric(
         "Files still to send",
         totals.waiting_on_trainee,
-        help="File slots trainees still need to upload or replace.",
+        help="File slots trainees still need to prepare or replace.",
     )
 
     attention = [
@@ -109,7 +110,7 @@ def render_dashboard(repository: TrainingRepository) -> None:
                 "case_progress": "Cases",
                 "file_progress": "Files",
                 "waiting": "Next action",
-                "waiting_on_trainer": "Sent to review",
+                "waiting_on_trainer": "In review",
                 "waiting_on_trainee": "Still to send",
                 "overdue_cases": "Overdue tasks",
                 "estimated_completion_date": "Est. completion",
@@ -192,7 +193,7 @@ def _assign_case(repository: TrainingRepository, *, case_row: dict) -> None:
     st.rerun()
 
 
-def render_cases(repository: TrainingRepository) -> None:
+def render_cases(repository: TrainingRepository, user_id: str) -> None:
     st.header("Cases")
     st.caption("Path: `/trainer-cases?trainee=…&case=…`")
     trainees = repository.list_active_trainees()
@@ -242,11 +243,23 @@ def render_cases(repository: TrainingRepository) -> None:
             st.markdown("##### Assign")
             _assign_case(repository, case_row=selected)
         else:
-            st.markdown("##### Files")
-            render_trainer_case_review(
-                repository,
-                case=cases_by_id[selected["id"]],
+            files_tab, review_tab = st.tabs(
+                [
+                    ":material/folder: Files",
+                    ":material/rate_review: Review",
+                ]
             )
+            with files_tab:
+                render_trainer_case_review(
+                    repository,
+                    case=cases_by_id[selected["id"]],
+                )
+            with review_tab:
+                render_trainer_revisions(
+                    repository,
+                    user_id=user_id,
+                    case=cases_by_id[selected["id"]],
+                )
 
 
 def render_trainer_portal(
@@ -262,6 +275,6 @@ def render_trainer_portal(
     if page == "Dashboard":
         render_dashboard(repository)
     elif page == "Cases":
-        render_cases(repository)
+        render_cases(repository, profile["id"])
     else:
         render_trainees(repository, profile["id"])

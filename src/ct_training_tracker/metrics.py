@@ -9,9 +9,9 @@ ACTIVE_CASE_STATUSES = {
     "corrections_sent",
 }
 OPEN_TASK_STATUSES = {"assigned", "awaiting_resubmission"}
-TASK_WITH_TRAINER_STATUSES = {"submitted", "in_review", "corrections_sent"}
+TASK_WITH_TRAINER_STATUSES = {"in_review", "corrections_sent"}
 TRAINEE_FILE_TODO = {"missing", "replacement_requested"}
-TRAINER_FILE_TODO = {"submitted", "under_review"}
+TRAINER_FILE_TODO = {"under_review"}
 SENT_FILE_STATUSES = {"submitted", "under_review"}
 UPLOADED_FILE_STATUSES = {
     "submitted",
@@ -117,8 +117,10 @@ def count_file_waiting(cases: list[dict[str, Any]]) -> FileWaitingCounts:
 def file_slot_label(status: str) -> str:
     if status == "accepted":
         return "Accepted"
-    if status in SENT_FILE_STATUSES:
-        return "Sent"
+    if status == "under_review":
+        return "With trainer"
+    if status == "submitted":
+        return "Ready"
     if status == "replacement_requested":
         return "To send (replace)"
     if status == "missing":
@@ -128,13 +130,13 @@ def file_slot_label(status: str) -> str:
 
 def waiting_label(row: dict[str, Any]) -> str:
     """Human-readable next-action summary for one trainee."""
-    sent = int(row.get("waiting_on_trainer", 0))
+    packages = int(row.get("waiting_on_trainer", 0))
     to_send = int(row.get("waiting_on_trainee", 0))
     overdue = int(row.get("overdue_cases", 0))
 
     parts: list[str] = []
-    if sent:
-        parts.append(f"Sent files to review: {sent}")
+    if packages:
+        parts.append(f"Packages in review: {packages}")
     if to_send:
         parts.append(f"Files to send: {to_send}")
     if overdue:

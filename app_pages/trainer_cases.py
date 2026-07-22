@@ -10,7 +10,7 @@ def main() -> None:
         return
     if runtime.profile["role"] != "trainer":
         return
-    render_cases(runtime.repository)
+    render_cases(runtime.repository, runtime.profile["id"])
 
 
 main()
