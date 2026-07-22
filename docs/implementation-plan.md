@@ -59,30 +59,18 @@ Exit criteria:
 
 ## 3. Revisions and corrections
 
-Status: in progress — section checklists + free text + screenshots wired;
-Ctrl+V paste and UI polish deferred
-
-- Eight fixed review sections with Peer Review checklist templates
-- Multiple checklist selections + free-text comments per section
-- Screenshots attached primarily via Ctrl/Cmd+V paste (upload from disk is fallback)
-- Status open/resolved; severity defaults to minor (hidden in UI)
-- Publish a revision to the trainee portal
-- Roll unresolved corrections into the next revision
-
-Exit criteria:
-
-- Previous revisions remain immutable and readable.
-- A new revision starts with unresolved work and does not duplicate resolved work.
-- Trainer can mark multiple checklist items plus free text per section.
+Status: complete pending UAT — checklists, paste screenshots, package submit,
+protocol OK vs needs-work
 
 ## 4. Questions
 
-Status: pending until milestone 3 is reviewed
+Status: in progress — schema, ask/answer RPCs, trainee tab, trainer inbox
 
-- Case/revision/section-linked trainee question threads
-- Trainer unanswered-question inbox
-- Screenshot attachments and resolved status
-- Notifications inside each portal
+- Case/section-linked trainee questions
+- Trainer unanswered-question inbox on the dashboard
+- Screenshot attachments (paste in comment box)
+- Open / answered / resolved status
+- Tracking events for ask, answer, and status changes
 
 Exit criteria:
 

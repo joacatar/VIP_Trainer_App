@@ -2,6 +2,7 @@ import datetime as dt
 from typing import Any, cast
 
 from ct_training_tracker.files import (
+    question_screenshot_storage_path,
     screenshot_storage_path,
     storage_object_path,
     validate_upload,
@@ -504,6 +505,149 @@ class TrainingRepository:
                 .insert(
                     {
                         "correction_id": correction_id,
+                        "storage_path": object_path,
+                        "original_filename": object_path.rsplit("/", 1)[-1],
+                        "mime_type": mime_type,
+                        "size_bytes": len(content),
+                        "uploaded_by": user_id,
+                    }
+                )
+                .execute()
+            )
+        except Exception:
+            self._client.storage.from_(CASE_FILES_BUCKET).remove([object_path])
+            raise
+        rows = result.data or []
+        return cast(str, rows[0]["id"] if rows else "")
+
+    def list_questions_for_case(self, case_id: str) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("questions")
+            .select(
+                "id, case_id, section_key, body, status, asked_by, answer_body, "
+                "answered_by, answered_at, resolved_at, created_at, "
+                "question_screenshots("
+                "id, storage_path, original_filename, mime_type, size_bytes, created_at"
+                ")"
+            )
+            .eq("case_id", case_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        rows = cast(list[dict[str, Any]], result.data or [])
+        for row in rows:
+            shots = sorted(
+                row.get("question_screenshots") or [],
+                key=lambda item: str(item.get("created_at") or ""),
+            )
+            row["question_screenshots"] = shots
+        return rows
+
+    def list_open_questions(self, *, limit: int = 50) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("questions")
+            .select(
+                "id, case_id, section_key, body, status, created_at, "
+                "cases(set_no, case_no, trainee_id, trainees(full_name))"
+            )
+            .eq("status", "open")
+            .order("created_at", desc=False)
+            .limit(limit)
+            .execute()
+        )
+        return cast(list[dict[str, Any]], result.data or [])
+
+    def count_open_questions(self) -> int:
+        result = (
+            self._client.table("questions")
+            .select("id", count="exact")
+            .eq("status", "open")
+            .execute()
+        )
+        if result.count is not None:
+            return int(result.count)
+        return len(result.data or [])
+
+    def ask_question(
+        self,
+        *,
+        case_id: str,
+        body: str,
+        section_key: str | None = None,
+    ) -> str:
+        params: dict[str, Any] = {
+            "target_case_id": case_id,
+            "question_body": body,
+        }
+        if section_key:
+            params["target_section_key"] = section_key
+        result = self._client.rpc("ask_question", params).execute()
+        return cast(str, result.data)
+
+    def answer_question(self, question_id: str, answer_body: str) -> None:
+        self._client.rpc(
+            "answer_question",
+            {
+                "target_question_id": question_id,
+                "response_body": answer_body,
+            },
+        ).execute()
+
+    def set_question_status(self, question_id: str, status: str) -> None:
+        self._client.rpc(
+            "set_question_status",
+            {
+                "target_question_id": question_id,
+                "next_status": status,
+            },
+        ).execute()
+
+    def upload_question_screenshot(
+        self,
+        *,
+        user_id: str,
+        case_id: str,
+        question_id: str,
+        filename: str,
+        content: bytes,
+        mime_type: str | None,
+    ) -> str:
+        owner_user_id = self.get_case_owner_user_id(case_id) or user_id
+        object_path = question_screenshot_storage_path(
+            owner_user_id=owner_user_id,
+            case_id=case_id,
+            question_id=question_id,
+            filename=filename,
+        )
+        try:
+            self._client.storage.from_(CASE_FILES_BUCKET).upload(
+                object_path,
+                content,
+                file_options={
+                    "content-type": mime_type or "application/octet-stream",
+                    "upsert": "false",
+                },
+            )
+        except Exception as exc:
+            message = str(getattr(exc, "message", None) or exc)
+            lowered = message.lower()
+            if (
+                "maximum allowed size" in lowered
+                or "entitytoolarge" in lowered
+                or "payload too large" in lowered
+            ):
+                size_mb = len(content) / (1024 * 1024)
+                raise ValueError(
+                    f"Supabase Storage rejected this screenshot ({size_mb:.1f} MB). "
+                    "Raise Storage → Settings → Global file size limit."
+                ) from exc
+            raise
+        try:
+            result = (
+                self._client.table("question_screenshots")
+                .insert(
+                    {
+                        "question_id": question_id,
                         "storage_path": object_path,
                         "original_filename": object_path.rsplit("/", 1)[-1],
                         "mime_type": mime_type,

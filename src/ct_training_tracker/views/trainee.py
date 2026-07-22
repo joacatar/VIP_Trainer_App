@@ -9,6 +9,7 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainee_case_uploads
+from ct_training_tracker.views.questions import render_trainee_questions
 from ct_training_tracker.views.revisions import render_trainee_revisions
 
 
@@ -72,10 +73,11 @@ def render_trainee_portal(
         case = cases_by_id[selected["id"]]
         file_counts = count_file_waiting([case])
 
-        files_tab, review_tab = st.tabs(
+        files_tab, review_tab, questions_tab = st.tabs(
             [
                 ":material/folder: Files",
                 ":material/rate_review: Feedback",
+                ":material/help: Questions",
             ]
         )
         with files_tab:
@@ -98,3 +100,9 @@ def render_trainee_portal(
             )
         with review_tab:
             render_trainee_revisions(repository, case=case)
+        with questions_tab:
+            render_trainee_questions(
+                repository,
+                user_id=profile["id"],
+                case=case,
+            )
