@@ -43,7 +43,7 @@ def _render_question_screenshots(
         cols = st.columns(min(4, len(visible)))
         for col, (_shot, data) in zip(cols, visible, strict=False):
             with col:
-                st.image(data, use_container_width=True)
+                st.image(data, width="stretch")
 
     for index, (shot, data, error) in enumerate(loaded):
         label = shot.get("original_filename") or f"Screenshot {index + 1}"
@@ -55,7 +55,7 @@ def _render_question_screenshots(
             if data is None:
                 st.error(f"Could not load screenshot: {error}")
                 continue
-            st.image(data, use_container_width=True)
+            st.image(data, width="stretch")
             try:
                 url = repository.create_signed_download_url(shot["storage_path"])
                 st.link_button(
@@ -285,31 +285,49 @@ def render_trainer_case_questions(
             f"{question_status_label(status)}"
         )
         with st.expander(title, expanded=expanded):
-            _status_badge(status)
-            st.write(question.get("body") or "")
-            _render_question_screenshots(
-                repository,
-                question.get("question_screenshots") or [],
-                key_prefix=f"trq_{question['id']}",
-            )
-
-            if question.get("answer_body"):
-                st.markdown("**Your answer**")
-                st.write(question["answer_body"])
-
             if status in {"open", "answered"}:
+                head_cols = st.columns([2, 1], vertical_alignment="center")
+                with head_cols[0]:
+                    _status_badge(status)
+                with head_cols[1]:
+                    if status == "answered" and st.button(
+                        "Mark as resolved",
+                        key=f"trainer_resolve_q_{question['id']}",
+                        type="secondary",
+                        width="stretch",
+                    ):
+                        try:
+                            repository.set_question_status(
+                                question["id"], "resolved"
+                            )
+                        except APIError as exc:
+                            st.error(exc.message)
+                        else:
+                            st.toast("Resolved")
+                            st.rerun()
+
+                st.write(question.get("body") or "")
+                _render_question_screenshots(
+                    repository,
+                    question.get("question_screenshots") or [],
+                    key_prefix=f"trq_{question['id']}",
+                )
+
+                if question.get("answer_body"):
+                    st.markdown("**Your answer**")
+                    st.write(question["answer_body"])
+
                 answer = st.text_area(
                     "Answer",
                     value=question.get("answer_body") or "",
                     key=f"answer_body_{question['id']}",
                     height=100,
                 )
-                action_cols = st.columns(2)
-                if action_cols[0].button(
+                if st.button(
                     "Send answer",
                     key=f"answer_q_{question['id']}",
                     type="primary",
-                    width="stretch",
+                    width="content",
                 ):
                     try:
                         repository.answer_question(question["id"], answer)
@@ -318,22 +336,21 @@ def render_trainer_case_questions(
                     else:
                         st.toast("Answer sent")
                         st.rerun()
-                if status == "answered" and action_cols[1].button(
-                    "Mark resolved",
-                    key=f"trainer_resolve_q_{question['id']}",
-                    width="stretch",
-                ):
-                    try:
-                        repository.set_question_status(question["id"], "resolved")
-                    except APIError as exc:
-                        st.error(exc.message)
-                    else:
-                        st.toast("Resolved")
-                        st.rerun()
             elif status == "resolved":
+                _status_badge(status)
+                st.write(question.get("body") or "")
+                _render_question_screenshots(
+                    repository,
+                    question.get("question_screenshots") or [],
+                    key_prefix=f"trq_{question['id']}",
+                )
+                if question.get("answer_body"):
+                    st.markdown("**Your answer**")
+                    st.write(question["answer_body"])
                 if st.button(
                     "Reopen",
                     key=f"trainer_reopen_q_{question['id']}",
+                    type="secondary",
                 ):
                     try:
                         repository.set_question_status(question["id"], "open")

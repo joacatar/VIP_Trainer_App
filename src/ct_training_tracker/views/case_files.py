@@ -180,6 +180,7 @@ def render_trainer_case_review(
     *,
     case: dict[str, Any],
 ) -> None:
+    """Read-only file links. Replacement decisions live in the Review tab draft."""
     if case["status"] not in {
         "submitted",
         "in_review",
@@ -192,8 +193,8 @@ def render_trainer_case_review(
 
     if case["status"] in PACKAGE_WITH_TRAINER_STATUSES:
         st.caption(
-            "Open links, then review in the Review tab. "
-            "Send back only if a file is wrong."
+            "Open each link here. Mark replacements and publish feedback "
+            "together in the Review tab."
         )
     elif case["status"] == "awaiting_resubmission":
         st.caption("Waiting for the trainee to fix and resubmit.")
@@ -210,7 +211,7 @@ def render_trainer_case_review(
         latest = requirement.get("latest_file")
 
         with st.container(border=True):
-            head = st.columns([2, 1])
+            head = st.columns([2, 1], vertical_alignment="center")
             head[0].markdown(f"**{label}**")
             if requirement["status"] == "accepted":
                 head[1].badge("Accepted", color="green")
@@ -225,7 +226,7 @@ def render_trainer_case_review(
                 st.caption(requirement["replacement_reason"])
 
             if url:
-                st.link_button("Open link", url)
+                st.link_button("Open link", url, width="content")
             elif latest:
                 try:
                     download_url = repository.create_signed_download_url(
@@ -236,41 +237,3 @@ def render_trainer_case_review(
                     st.error(f"Download unavailable: {exc}")
             else:
                 st.caption("Not sent yet.")
-                continue
-
-            if requirement["status"] == "accepted":
-                continue
-
-            if requirement["status"] not in READY_SLOT_STATUSES | {
-                "replacement_requested"
-            }:
-                continue
-
-            if case["status"] not in PACKAGE_WITH_TRAINER_STATUSES | {
-                "awaiting_resubmission"
-            }:
-                continue
-
-            note = st.text_input(
-                "Replacement note",
-                key=f"review_note_{requirement['id']}",
-                placeholder="Why this slot needs to be resent",
-                label_visibility="collapsed",
-            )
-            st.caption("Optional note if requesting replacement")
-            if st.button(
-                f"Request replacement · {label}",
-                key=f"reject_{requirement['id']}",
-                width="stretch",
-            ):
-                try:
-                    repository.review_file_requirement(
-                        requirement_id=requirement["id"],
-                        decision="rejected",
-                        note=note,
-                    )
-                except APIError as exc:
-                    st.error(exc.message)
-                    continue
-                st.toast(f"{label} sent back")
-                st.rerun()

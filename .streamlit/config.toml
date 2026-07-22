@@ -4,25 +4,31 @@ maxUploadSize = 1024
 maxMessageSize = 1024
 
 [theme]
-base = "light"
+font = "sans-serif"
+baseFontSize = 15
+headingFontSizes = ["1.9rem", "1.45rem", "1.2rem", "1.05rem", "1rem", "0.95rem"]
+headingFontWeights = [700, 650, 650, 600, 600, 600]
+baseRadius = "0.5rem"
+buttonRadius = "0.5rem"
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.light]
 primaryColor = "#0f766e"
 backgroundColor = "#f8fafc"
 secondaryBackgroundColor = "#ffffff"
 textColor = "#0f172a"
 linkColor = "#0f766e"
-borderColor = "#e2e8f0"
-font = "sans serif"
-baseFontSize = 15
-headingFontSizes = ["1.75rem", "1.35rem", "1.15rem", "1.05rem", "1rem", "0.95rem"]
-
-redColor = "#dc2626"
-orangeColor = "#d97706"
-yellowColor = "#ca8a04"
-greenColor = "#16a34a"
-blueColor = "#0284c8"
-violetColor = "#7c3aed"
+borderColor = "#dbe3ee"
+dataframeBorderColor = "#dbe3ee"
+dataframeHeaderBackgroundColor = "#eef4f7"
+redColor = "#c2413b"
+orangeColor = "#b45309"
+yellowColor = "#a16207"
+greenColor = "#15803d"
+blueColor = "#0369a1"
+violetColor = "#6d28d9"
 grayColor = "#64748b"
-
 greenBackgroundColor = "#dcfce7"
 greenTextColor = "#166534"
 orangeBackgroundColor = "#ffedd5"
@@ -33,3 +39,42 @@ blueBackgroundColor = "#e0f2fe"
 blueTextColor = "#075985"
 grayBackgroundColor = "#f1f5f9"
 grayTextColor = "#475569"
+
+[theme.light.sidebar]
+backgroundColor = "#f1f5f9"
+secondaryBackgroundColor = "#ffffff"
+textColor = "#0f172a"
+borderColor = "#dbe3ee"
+
+[theme.dark]
+primaryColor = "#2dd4bf"
+backgroundColor = "#0f172a"
+secondaryBackgroundColor = "#172033"
+textColor = "#e5edf7"
+linkColor = "#5eead4"
+borderColor = "#334155"
+dataframeBorderColor = "#334155"
+dataframeHeaderBackgroundColor = "#1e293b"
+redColor = "#fca5a5"
+orangeColor = "#fdba74"
+yellowColor = "#fde68a"
+greenColor = "#86efac"
+blueColor = "#7dd3fc"
+violetColor = "#c4b5fd"
+grayColor = "#94a3b8"
+greenBackgroundColor = "#173b2a"
+greenTextColor = "#bbf7d0"
+orangeBackgroundColor = "#462a14"
+orangeTextColor = "#fed7aa"
+redBackgroundColor = "#481c22"
+redTextColor = "#fecaca"
+blueBackgroundColor = "#12344d"
+blueTextColor = "#bae6fd"
+grayBackgroundColor = "#1e293b"
+grayTextColor = "#cbd5e1"
+
+[theme.dark.sidebar]
+backgroundColor = "#0b1220"
+secondaryBackgroundColor = "#172033"
+textColor = "#e5edf7"
+borderColor = "#334155"
