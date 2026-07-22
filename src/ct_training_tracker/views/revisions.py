@@ -12,6 +12,7 @@ from ct_training_tracker.components.paste_image import (
     clear_comment_draft,
     comment_box,
 )
+from ct_training_tracker.files import FILE_KIND_LABELS, READY_SLOT_STATUSES
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.revisions import (
     can_start_revision,
@@ -21,6 +22,340 @@ from ct_training_tracker.revisions import (
     partition_sections_by_feedback,
     section_label,
 )
+
+KIND_ORDER = ("pdf_primary", "pdf_secondary", "ov")
+
+
+def _sorted_requirements(requirements: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    order = {kind: index for index, kind in enumerate(KIND_ORDER)}
+    return sorted(requirements, key=lambda row: order.get(row["kind"], 99))
+
+
+def _collect_file_draft_decisions(
+    requirements: list[dict[str, Any]],
+    *,
+    case_id: str,
+) -> list[dict[str, str]]:
+    """Read draft replacement toggles from session widgets."""
+    decisions: list[dict[str, str]] = []
+    for requirement in requirements:
+        if requirement["status"] not in READY_SLOT_STATUSES | {
+            "replacement_requested"
+        }:
+            continue
+        if requirement["status"] == "accepted":
+            continue
+        req_id = str(requirement["id"])
+        needs = bool(
+            st.session_state.get(f"draft_replace_{case_id}_{req_id}", False)
+        )
+        note = str(
+            st.session_state.get(f"draft_replace_note_{case_id}_{req_id}", "")
+            or ""
+        ).strip()
+        if needs:
+            decisions.append(
+                {
+                    "requirement_id": req_id,
+                    "decision": "rejected",
+                    "note": note,
+                }
+            )
+    return decisions
+
+
+def _render_file_draft_panel(
+    requirements: list[dict[str, Any]],
+    *,
+    case_id: str,
+    editable: bool,
+) -> None:
+    """Silent draft flags for files — applied only on publish."""
+    reviewable = [
+        row
+        for row in requirements
+        if row["status"] in READY_SLOT_STATUSES | {"replacement_requested"}
+        or row["status"] == "accepted"
+    ]
+    if not reviewable:
+        return
+
+    st.markdown("#### 1. Package files")
+    st.caption(
+        "Mark files that need replacement. Nothing is sent until you publish."
+    )
+    for requirement in reviewable:
+        label = FILE_KIND_LABELS[requirement["kind"]]
+        req_id = str(requirement["id"])
+        url = requirement.get("external_url") or ""
+        with st.container(border=True):
+            head = st.columns([2, 1], vertical_alignment="center")
+            head[0].markdown(f"**{label}**")
+            if requirement["status"] == "accepted":
+                head[1].badge("Accepted", color="green")
+            elif requirement["status"] == "replacement_requested":
+                head[1].badge("Replace pending", color="orange")
+            else:
+                head[1].badge("In review", color="blue")
+            if url:
+                st.link_button("Open link", url, width="content")
+            if not editable or requirement["status"] == "accepted":
+                continue
+            needs = st.checkbox(
+                "Needs replacement",
+                key=f"draft_replace_{case_id}_{req_id}",
+            )
+            if needs:
+                st.text_input(
+                    "Why this file needs to be resent",
+                    key=f"draft_replace_note_{case_id}_{req_id}",
+                    placeholder="Optional note for the trainee",
+                )
+
+
+def _render_publish_action_bar(
+    repository: TrainingRepository,
+    *,
+    case: dict[str, Any],
+    revision_id: str | None,
+    requirements: list[dict[str, Any]],
+    is_draft: bool,
+) -> None:
+    """Single consolidation point: return package or approve."""
+    if case["status"] not in {"in_review", "corrections_sent"}:
+        return
+
+    decisions = _collect_file_draft_decisions(
+        requirements,
+        case_id=case["id"],
+    )
+    open_feedback = 0
+    if revision_id and is_draft:
+        revision = next(
+            (
+                row
+                for row in repository.list_revisions_for_case(case["id"])
+                if row["id"] == revision_id
+            ),
+            None,
+        )
+        if revision:
+            open_feedback = count_open_corrections_in_tree(revision)
+
+    with st.container(border=True):
+        st.markdown("**3. Finish**")
+        parts: list[str] = []
+        if decisions:
+            parts.append(f"{len(decisions)} file(s) marked for replacement")
+        if open_feedback:
+            parts.append(f"{open_feedback} correction(s) ready to publish")
+        if not parts:
+            parts.append(
+                "No replacements marked. Publish feedback only, or approve the package."
+            )
+        st.caption(" · ".join(parts))
+
+        publish_col, approve_col = st.columns(2)
+        with publish_col:
+            can_publish = bool(decisions) or (is_draft and revision_id is not None)
+            if st.button(
+                "Publish review & notify trainee",
+                key=f"publish_case_review_{case['id']}",
+                type="primary",
+                width="stretch",
+                icon=":material/send:",
+                disabled=not can_publish,
+            ):
+                try:
+                    repository.publish_case_review(
+                        case_id=case["id"],
+                        revision_id=revision_id if is_draft else None,
+                        file_decisions=decisions,
+                        approve_package=False,
+                    )
+                except APIError as exc:
+                    st.error(exc.message)
+                else:
+                    st.toast("Review published")
+                    st.rerun()
+        with approve_col:
+            if st.button(
+                "Approve case",
+                key=f"approve_case_{case['id']}",
+                width="stretch",
+                icon=":material/check_circle:",
+                disabled=bool(decisions),
+                help=(
+                    "Accepts all files and closes the case. "
+                    "Clear replacement marks first."
+                ),
+            ):
+                try:
+                    accept_all = [
+                        {
+                            "requirement_id": str(row["id"]),
+                            "decision": "accepted",
+                            "note": "",
+                        }
+                        for row in requirements
+                        if row["status"] in READY_SLOT_STATUSES
+                    ]
+                    repository.publish_case_review(
+                        case_id=case["id"],
+                        revision_id=revision_id if is_draft else None,
+                        file_decisions=accept_all,
+                        approve_package=True,
+                    )
+                except APIError as exc:
+                    st.error(exc.message)
+                else:
+                    st.toast("Case approved")
+                    st.rerun()
+
+
+def render_trainer_revisions(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case: dict[str, Any],
+) -> None:
+    st.subheader("Feedback")
+    status = case["status"]
+    requirements = _sorted_requirements(
+        repository.list_requirements_for_case(case["id"])
+    )
+    revisions = repository.list_revisions_for_case(case["id"])
+    draft = next((row for row in revisions if row["status"] == "draft"), None)
+    can_edit_files = status in {"in_review", "corrections_sent"}
+
+    if can_start_revision(status) and draft is None:
+        st.caption("Start a feedback draft for anatomy sections, then publish once.")
+        if st.button(
+            "Start feedback draft",
+            key=f"start_revision_{case['id']}",
+            type="primary",
+            icon=":material/rate_review:",
+        ):
+            try:
+                repository.create_revision(case["id"])
+            except APIError as exc:
+                st.error(exc.message)
+            else:
+                st.toast("Draft review started")
+                st.rerun()
+        if not revisions:
+            _render_file_draft_panel(
+                requirements,
+                case_id=case["id"],
+                editable=can_edit_files,
+            )
+            _render_publish_action_bar(
+                repository,
+                case=case,
+                revision_id=None,
+                requirements=requirements,
+                is_draft=False,
+            )
+            return
+    elif not can_start_revision(status) and draft is None and not revisions:
+        st.caption("Review unlocks after the trainee submits the package.")
+        return
+
+    if not revisions:
+        _render_file_draft_panel(
+            requirements,
+            case_id=case["id"],
+            editable=can_edit_files,
+        )
+        _render_publish_action_bar(
+            repository,
+            case=case,
+            revision_id=None,
+            requirements=requirements,
+            is_draft=False,
+        )
+        return
+
+    labels = {
+        row["id"]: (
+            f"Revision {row['revision_no']} · {row['status']}"
+            + (
+                f" · {count_open_corrections_in_tree(row)} open"
+                if row["status"] == "draft"
+                else ""
+            )
+        )
+        for row in revisions
+    }
+    default_id = draft["id"] if draft else revisions[0]["id"]
+    options = list(labels)
+    index = options.index(default_id) if default_id in labels else 0
+
+    revision_id = st.selectbox(
+        "Revision",
+        options=options,
+        index=index,
+        format_func=lambda value: labels[value],
+        key=f"trainer_revision_{case['id']}",
+        label_visibility="collapsed",
+    )
+    revision = next(row for row in revisions if row["id"] == revision_id)
+    is_draft = revision["status"] == "draft"
+    if not is_draft:
+        st.badge("Published", icon=":material/lock:", color="blue")
+
+    _render_file_draft_panel(
+        requirements,
+        case_id=case["id"],
+        editable=is_draft or can_edit_files,
+    )
+
+    if is_draft:
+        st.markdown("#### 2. Section feedback")
+        st.caption(
+            "Empty sections stay OK. Only save feedback where something is wrong."
+        )
+    _render_protocol_chips(revision)
+
+    sections = revision["revision_sections"]
+    section = _pick_section(
+        sections,
+        key=f"trainer_section_{revision_id}",
+    )
+    corrections = section.get("corrections") or []
+    title = section_label(section["section_key"])
+
+    if corrections:
+        st.markdown(f"**{title}** · {len(corrections)} saved")
+        for correction in corrections:
+            _render_correction_card(
+                repository,
+                user_id=user_id,
+                case_id=case["id"],
+                correction=correction,
+                is_draft=is_draft,
+            )
+    else:
+        st.success(
+            f"{title} is OK — no corrections saved yet.",
+            icon=":material/check_circle:",
+        )
+
+    if is_draft:
+        _render_section_feedback_composer(
+            repository,
+            user_id=user_id,
+            case_id=case["id"],
+            section=section,
+        )
+
+    _render_publish_action_bar(
+        repository,
+        case=case,
+        revision_id=revision_id,
+        requirements=requirements,
+        is_draft=is_draft,
+    )
 
 
 def _upload_images(
@@ -87,7 +422,7 @@ def _render_screenshots(
         thumb_cols = st.columns(min(4, len(visible)))
         for col, (_shot, data) in zip(thumb_cols, visible, strict=False):
             with col:
-                st.image(data, use_container_width=True)
+                st.image(data, width="stretch")
 
     for index, (shot, data, error) in enumerate(loaded):
         label = shot.get("original_filename") or f"Screenshot {index + 1}"
@@ -99,7 +434,7 @@ def _render_screenshots(
             if data is None:
                 st.error(f"Could not load screenshot: {error}")
                 continue
-            st.image(data, use_container_width=True)
+            st.image(data, width="stretch")
             try:
                 url = repository.create_signed_download_url(shot["storage_path"])
                 st.link_button(
@@ -429,127 +764,4 @@ def render_trainee_revisions(
                 f":green-badge[{section_label(section['section_key'])}]"
                 for section in ok
             )
-        )
-
-
-def render_trainer_revisions(
-    repository: TrainingRepository,
-    *,
-    user_id: str,
-    case: dict[str, Any],
-) -> None:
-    st.subheader("Review")
-    status = case["status"]
-    revisions = repository.list_revisions_for_case(case["id"])
-    draft = next((row for row in revisions if row["status"] == "draft"), None)
-
-    if can_start_revision(status) and draft is None:
-        st.caption("Open a draft to leave section feedback for this package.")
-        if st.button(
-            "Start review",
-            key=f"start_revision_{case['id']}",
-            type="primary",
-            icon=":material/rate_review:",
-        ):
-            try:
-                repository.create_revision(case["id"])
-            except APIError as exc:
-                st.error(exc.message)
-            else:
-                st.toast("Draft review started")
-                st.rerun()
-        if not revisions:
-            return
-    elif not can_start_revision(status) and draft is None and not revisions:
-        st.caption(
-            "Review unlocks after the trainee submits the package."
-        )
-        return
-
-    if not revisions:
-        return
-
-    labels = {
-        row["id"]: (
-            f"Revision {row['revision_no']} · {row['status']}"
-            + (
-                f" · {count_open_corrections_in_tree(row)} open"
-                if row["status"] == "draft"
-                else ""
-            )
-        )
-        for row in revisions
-    }
-    default_id = draft["id"] if draft else revisions[0]["id"]
-    options = list(labels)
-    index = options.index(default_id) if default_id in labels else 0
-
-    toolbar = st.columns([2.2, 1])
-    with toolbar[0]:
-        revision_id = st.selectbox(
-            "Revision",
-            options=options,
-            index=index,
-            format_func=lambda value: labels[value],
-            key=f"trainer_revision_{case['id']}",
-            label_visibility="collapsed",
-        )
-    revision = next(row for row in revisions if row["id"] == revision_id)
-    is_draft = revision["status"] == "draft"
-
-    with toolbar[1]:
-        if is_draft:
-            if st.button(
-                "Publish",
-                key=f"publish_revision_{revision_id}",
-                type="primary",
-                width="stretch",
-                icon=":material/send:",
-            ):
-                try:
-                    repository.publish_revision(revision_id)
-                except APIError as exc:
-                    st.error(exc.message)
-                else:
-                    st.toast("Published to trainee")
-                    st.rerun()
-        else:
-            st.badge("Published", icon=":material/lock:", color="blue")
-
-    if is_draft:
-        st.caption(
-            "Empty sections stay OK. Only save feedback where something is wrong."
-        )
-    _render_protocol_chips(revision)
-
-    sections = revision["revision_sections"]
-    section = _pick_section(
-        sections,
-        key=f"trainer_section_{revision_id}",
-    )
-    corrections = section.get("corrections") or []
-    title = section_label(section["section_key"])
-
-    if corrections:
-        st.markdown(f"**{title}** · {len(corrections)} saved")
-        for correction in corrections:
-            _render_correction_card(
-                repository,
-                user_id=user_id,
-                case_id=case["id"],
-                correction=correction,
-                is_draft=is_draft,
-            )
-    else:
-        st.success(
-            f"{title} is OK — no corrections saved yet.",
-            icon=":material/check_circle:",
-        )
-
-    if is_draft:
-        _render_section_feedback_composer(
-            repository,
-            user_id=user_id,
-            case_id=case["id"],
-            section=section,
         )

@@ -293,6 +293,25 @@ class TrainingRepository:
             },
         ).execute()
 
+    def publish_case_review(
+        self,
+        *,
+        case_id: str,
+        revision_id: str | None = None,
+        file_decisions: list[dict[str, str]] | None = None,
+        approve_package: bool = False,
+    ) -> None:
+        """Apply file decisions and publish feedback in one trainer action."""
+        self._client.rpc(
+            "publish_case_review",
+            {
+                "target_case_id": case_id,
+                "target_revision_id": revision_id,
+                "file_decisions": file_decisions or [],
+                "approve_package": approve_package,
+            },
+        ).execute()
+
     def submit_case_for_review(self, case_id: str) -> None:
         self._client.rpc(
             "submit_case_for_review",

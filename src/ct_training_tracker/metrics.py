@@ -1,5 +1,8 @@
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
+
+CaseOwner = Literal["trainee", "trainer", "none"]
+AppRole = Literal["trainee", "trainer"]
 
 ACTIVE_CASE_STATUSES = {
     "assigned",
@@ -8,7 +11,15 @@ ACTIVE_CASE_STATUSES = {
     "in_review",
     "corrections_sent",
 }
-OPEN_TASK_STATUSES = {"assigned", "awaiting_resubmission"}
+# Trainee still owns the case until they notify the trainer for review.
+TRAINEE_OWNED_STATUSES = frozenset(
+    {"assigned", "submitted", "awaiting_resubmission"}
+)
+# Trainer must assign, review a package, or continue after publishing feedback.
+TRAINER_OWNED_STATUSES = frozenset(
+    {"not_started", "in_review", "corrections_sent"}
+)
+OPEN_TASK_STATUSES = set(TRAINEE_OWNED_STATUSES)
 TASK_WITH_TRAINER_STATUSES = {"in_review", "corrections_sent"}
 TRAINEE_FILE_TODO = {"missing", "replacement_requested"}
 TRAINER_FILE_TODO = {"under_review"}
@@ -19,6 +30,51 @@ UPLOADED_FILE_STATUSES = {
     "accepted",
     "replacement_requested",
 }
+
+_NEXT_STEP: dict[tuple[str, AppRole], str] = {
+    ("not_started", "trainer"): "Assign this case",
+    ("not_started", "trainee"): "Waiting for assignment",
+    ("assigned", "trainee"): "Prepare files and submit package",
+    ("assigned", "trainer"): "Waiting on trainee",
+    ("submitted", "trainee"): "Submit package for review",
+    ("submitted", "trainer"): "Waiting on trainee",
+    ("awaiting_resubmission", "trainee"): "Replace requested files",
+    ("awaiting_resubmission", "trainer"): "Waiting on trainee",
+    ("in_review", "trainer"): "Review package",
+    ("in_review", "trainee"): "Waiting on trainer",
+    ("corrections_sent", "trainer"): "Continue review or wait",
+    ("corrections_sent", "trainee"): "Read feedback",
+    ("approved", "trainer"): "Done",
+    ("approved", "trainee"): "Done",
+}
+
+
+def case_owner(status: str) -> CaseOwner:
+    """Who must take the next case-level action."""
+    if status in TRAINEE_OWNED_STATUSES:
+        return "trainee"
+    if status in TRAINER_OWNED_STATUSES:
+        return "trainer"
+    return "none"
+
+
+def next_step(status: str, *, role: AppRole) -> str:
+    """Short role-aware call-to-action for inbox rows and headers."""
+    return _NEXT_STEP.get((status, role), "No action needed")
+
+
+def owned_by_statuses(role: AppRole) -> frozenset[str]:
+    if role == "trainer":
+        return TRAINER_OWNED_STATUSES
+    return TRAINEE_OWNED_STATUSES
+
+
+def waiting_on_other_statuses(role: AppRole) -> frozenset[str]:
+    """Statuses where the other party owns the next action."""
+    if role == "trainer":
+        return TRAINEE_OWNED_STATUSES
+    # Trainee should not treat unassigned cases as "with trainer".
+    return frozenset({"in_review", "corrections_sent"})
 
 
 @dataclass(frozen=True, slots=True)

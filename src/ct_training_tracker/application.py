@@ -5,9 +5,17 @@ from ct_training_tracker.runtime import create_client_or_none, load_profile
 from ct_training_tracker.views.login import render_login
 
 
-def _render_sign_out(client) -> None:
+def _render_account_panel(client, profile: dict) -> None:
     with st.sidebar:
-        if st.button("Sign out"):
+        st.subheader(profile["full_name"] or "Training account")
+        st.badge(profile["role"].replace("_", " ").title(), color="blue")
+        st.caption("Signed in")
+        st.space("small")
+        if st.button(
+            "Sign out",
+            icon=":material/logout:",
+            width="stretch",
+        ):
             client.auth.sign_out()
             clear_session(st.session_state)
             st.rerun()
@@ -41,8 +49,7 @@ def run() -> None:
         render_login(client, st.session_state)
         return
 
-    st.sidebar.write(f"Signed in as **{profile['full_name'] or profile['role']}**")
-    _render_sign_out(client)
+    _render_account_panel(client, profile)
 
     if profile["role"] == "trainer":
         pages = [
@@ -60,6 +67,12 @@ def run() -> None:
                 url_path="trainer-cases",
             ),
             st.Page(
+                "app_pages/trainer_case_workspace.py",
+                title="Review",
+                icon=":material/rate_review:",
+                url_path="trainer-case",
+            ),
+            st.Page(
                 "app_pages/trainer_add_trainee.py",
                 title="Add trainee",
                 icon=":material/person_add:",
@@ -74,7 +87,13 @@ def run() -> None:
                 icon=":material/assignment:",
                 url_path="trainee",
                 default=True,
-            )
+            ),
+            st.Page(
+                "app_pages/trainee_case_workspace.py",
+                title="Case workspace",
+                icon=":material/open_in_new:",
+                url_path="trainee-case",
+            ),
         ]
 
     page = st.navigation(pages, position="top")

@@ -86,12 +86,13 @@ def test_count_file_waiting_uses_to_send_sent_accepted() -> None:
 def test_count_tasks_separates_open_and_with_trainer() -> None:
     cases = [
         {"status": "assigned", "due_date": "2099-01-01"},
+        {"status": "submitted", "due_date": "2099-01-01"},
         {"status": "in_review", "due_date": "2099-01-01"},
         {"status": "approved", "due_date": "2099-01-01"},
         {"status": "assigned", "due_date": "2020-01-01"},
     ]
     assert count_tasks(cases) == TaskCounts(
-        open_tasks=2,
+        open_tasks=3,
         with_trainer=1,
         approved=1,
         overdue=1,
