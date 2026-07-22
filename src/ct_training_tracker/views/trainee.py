@@ -9,6 +9,7 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainee_case_uploads
+from ct_training_tracker.views.revisions import render_trainee_revisions
 
 
 def render_trainee_portal(
@@ -72,7 +73,9 @@ def render_trainee_portal(
         file_counts = count_file_waiting([case])
 
         st.markdown("##### Files")
-        st.caption("PDF 1, PDF 2, and OV for this case.")
+        st.caption(
+            "PDF 1, PDF 2, and OV — paste OneDrive links and mark each as sent."
+        )
         file_cols = st.columns(3)
         file_cols[0].metric("To send", file_counts.to_send)
         file_cols[1].metric("Sent", file_counts.sent)
@@ -83,3 +86,4 @@ def render_trainee_portal(
             user_id=profile["id"],
             case=case,
         )
+        render_trainee_revisions(repository, case=case)

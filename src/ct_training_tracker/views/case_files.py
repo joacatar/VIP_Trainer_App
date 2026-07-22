@@ -1,18 +1,26 @@
-"""Case file upload and review widgets."""
+"""Case file link submission and review widgets (OneDrive links)."""
 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlparse
 
 import streamlit as st
 from postgrest.exceptions import APIError
 
-from ct_training_tracker.files import ALLOWED_EXTENSIONS, FILE_KIND_LABELS
+from ct_training_tracker.files import FILE_KIND_LABELS
 from ct_training_tracker.metrics import file_slot_label
 from ct_training_tracker.repository import TrainingRepository
 
-UPLOADABLE_STATUSES = {"assigned", "submitted", "awaiting_resubmission", "in_review"}
+EDITABLE_CASE_STATUSES = {
+    "assigned",
+    "submitted",
+    "awaiting_resubmission",
+    "in_review",
+    "corrections_sent",
+}
 KIND_ORDER = ("pdf_primary", "pdf_secondary", "ov")
+SENT_STATUSES = {"submitted", "under_review"}
 
 
 def _sorted_requirements(requirements: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -20,35 +28,14 @@ def _sorted_requirements(requirements: list[dict[str, Any]]) -> list[dict[str, A
     return sorted(requirements, key=lambda row: order.get(row["kind"], 99))
 
 
-def _uploader_type(kind: str) -> list[str] | None:
-    """Browser accept filters break on obscure compound extensions.
-
-    Keep the filter for PDFs; leave OV unrestricted and validate in Python.
-    """
-    if kind.startswith("pdf"):
-        return ["pdf"]
-    return None
-
-
-def _feedback_key(requirement_id: str) -> str:
-    return f"upload_feedback_{requirement_id}"
-
-
-def _show_feedback(requirement_id: str) -> None:
-    feedback = st.session_state.get(_feedback_key(requirement_id))
-    if not feedback:
-        return
-    level, message = feedback
-    if level == "success":
-        st.success(message)
-    elif level == "error":
-        st.error(message)
-    else:
-        st.info(message)
-
-
-def _set_feedback(requirement_id: str, level: str, message: str) -> None:
-    st.session_state[_feedback_key(requirement_id)] = (level, message)
+def _normalize_share_url(raw: str) -> str:
+    value = raw.strip()
+    if not value:
+        return ""
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError("Link must be a full http(s) URL (e.g. OneDrive share link).")
+    return value
 
 
 def render_trainee_case_uploads(
@@ -57,9 +44,10 @@ def render_trainee_case_uploads(
     user_id: str,
     case: dict[str, Any],
 ) -> None:
-    if case["status"] not in UPLOADABLE_STATUSES:
+    del user_id  # Auth comes from the session client / RPC.
+    if case["status"] not in EDITABLE_CASE_STATUSES:
         st.caption(
-            f"This case is not ready for uploads yet "
+            "This case is not ready for file links yet "
             f"(status: {str(case['status']).replace('_', ' ')})."
         )
         return
@@ -70,88 +58,65 @@ def render_trainee_case_uploads(
     for requirement in requirements:
         label = FILE_KIND_LABELS[requirement["kind"]]
         slot_state = file_slot_label(requirement["status"])
-        latest = requirement.get("latest_file")
-        allowed = ALLOWED_EXTENSIONS.get(requirement["kind"], ())
         requirement_id = requirement["id"]
+        current_url = requirement.get("external_url") or ""
 
         with st.container(border=True):
             st.markdown(f"**{label}** · {slot_state}")
-            _show_feedback(requirement_id)
             if requirement.get("replacement_reason"):
                 st.warning(requirement["replacement_reason"])
-            if latest:
-                st.caption(
-                    f"Latest: {latest['original_filename']} (v{latest['version_no']})"
-                )
+
             if requirement["status"] == "accepted":
+                if current_url:
+                    st.link_button("Open OneDrive link", current_url)
                 st.success("Accepted — nothing else to send for this slot.")
                 continue
 
-            if requirement["status"] in {"submitted", "under_review"}:
+            st.caption("Paste a OneDrive share link, then mark as sent.")
+            url_value = st.text_input(
+                f"{label} OneDrive link",
+                value=current_url,
+                key=f"link_{requirement_id}",
+                placeholder="https://…onedrive…/…",
+            )
+
+            if requirement["status"] in SENT_STATUSES:
                 st.success("Sent — waiting for trainer review.")
+                if current_url:
+                    st.link_button("Open current link", current_url)
+                if st.button(
+                    f"Undo sent · {label}",
+                    key=f"unmark_{requirement_id}",
+                ):
+                    try:
+                        repository.unmark_file_sent(requirement_id)
+                    except APIError as exc:
+                        st.error(exc.message)
+                    else:
+                        st.rerun()
                 continue
 
-            if allowed:
-                st.caption(
-                    f"Required extension: {', '.join(allowed)}. "
-                    "Max size: 1 GB per file."
-                )
-
-            # Do not put file_uploader inside st.form — Streamlit often returns
-            # None on submit even when a file was selected.
-            uploaded = st.file_uploader(
-                f"Choose {label}",
-                type=_uploader_type(requirement["kind"]),
-                key=f"upload_{requirement_id}",
-            )
-            if uploaded is not None:
-                st.info(
-                    f"Selected `{uploaded.name}` · {uploaded.size:,} bytes · "
-                    f"mime `{uploaded.type or 'unknown'}`"
-                )
-
-            submit = st.button(
-                f"Submit {label}",
-                key=f"submit_{requirement_id}",
+            if st.button(
+                f"Mark {label} as sent",
+                key=f"mark_{requirement_id}",
                 type="primary",
-                disabled=uploaded is None,
-            )
-            if not submit:
-                continue
-            if uploaded is None:
-                _set_feedback(
-                    requirement_id,
-                    "error",
-                    f"No file selected for {label}. Choose a file, then submit.",
-                )
-                st.rerun()
-
-            with st.spinner(f"Uploading {uploaded.name}…"):
+            ):
                 try:
-                    repository.upload_case_file(
-                        user_id=user_id,
-                        case_id=case["id"],
-                        requirement_id=requirement_id,
-                        kind=requirement["kind"],
-                        filename=uploaded.name,
-                        content=uploaded.getvalue(),
-                        mime_type=uploaded.type or "application/octet-stream",
+                    cleaned = (
+                        _normalize_share_url(url_value)
+                        if url_value.strip()
+                        else ""
                     )
-                except (APIError, ValueError, Exception) as exc:
-                    message = getattr(exc, "message", None) or str(exc)
-                    _set_feedback(
+                    repository.mark_file_sent(
                         requirement_id,
-                        "error",
-                        f"Upload failed for `{uploaded.name}`: {message}",
+                        share_url=cleaned or None,
                     )
+                except (APIError, ValueError) as exc:
+                    message = getattr(exc, "message", None) or str(exc)
+                    st.error(message)
+                else:
+                    st.success(f"{label} marked as sent.")
                     st.rerun()
-
-            _set_feedback(
-                requirement_id,
-                "success",
-                f"{label} uploaded: `{uploaded.name}`",
-            )
-            st.rerun()
 
 
 def render_trainer_case_review(
@@ -164,6 +129,7 @@ def render_trainer_case_review(
         "in_review",
         "awaiting_resubmission",
         "assigned",
+        "corrections_sent",
     }:
         st.caption("Assign this case before reviewing files.")
         return
@@ -174,26 +140,33 @@ def render_trainer_case_review(
     for requirement in requirements:
         label = FILE_KIND_LABELS[requirement["kind"]]
         slot_state = file_slot_label(requirement["status"])
+        url = requirement.get("external_url") or ""
         latest = requirement.get("latest_file")
+
         with st.container(border=True):
             st.markdown(f"**{label}** · {slot_state}")
-            if not latest:
+            if requirement.get("replacement_reason"):
+                st.caption(f"Last note: {requirement['replacement_reason']}")
+
+            if url:
+                st.link_button("Open OneDrive link", url)
+            elif latest:
+                try:
+                    download_url = repository.create_signed_download_url(
+                        latest["storage_path"]
+                    )
+                    st.link_button("Download (legacy upload)", download_url)
+                except Exception as exc:
+                    st.error(f"Download unavailable: {exc}")
+            else:
                 st.caption("Not sent yet.")
                 continue
 
-            st.caption(
-                f"{latest['original_filename']} · version {latest['version_no']}"
-            )
-            try:
-                download_url = repository.create_signed_download_url(
-                    latest["storage_path"]
-                )
-                st.link_button("Download", download_url)
-            except Exception as exc:
-                st.error(f"Download unavailable: {exc}")
-
             if requirement["status"] == "accepted":
                 st.success("Already accepted.")
+                continue
+
+            if requirement["status"] not in SENT_STATUSES | {"replacement_requested"}:
                 continue
 
             note = st.text_input(
@@ -207,8 +180,8 @@ def render_trainer_case_review(
                 key=f"accept_{requirement['id']}",
             ):
                 try:
-                    repository.review_case_file(
-                        file_id=latest["id"],
+                    repository.review_file_requirement(
+                        requirement_id=requirement["id"],
                         decision="accepted",
                         note=note,
                     )
@@ -222,8 +195,8 @@ def render_trainer_case_review(
                 key=f"reject_{requirement['id']}",
             ):
                 try:
-                    repository.review_case_file(
-                        file_id=latest["id"],
+                    repository.review_file_requirement(
+                        requirement_id=requirement["id"],
                         decision="rejected",
                         note=note,
                     )

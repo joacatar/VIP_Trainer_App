@@ -26,21 +26,22 @@ Exit criteria:
 
 ## 2. Homework and file submissions
 
-Status: complete pending review — assignment, uploads/review, routed case board,
-and waiting-on trainer/trainee dashboard indicators are implemented
+Status: complete pending UAT — assignment, OneDrive link + sent toggle per slot,
+routed case board, and waiting indicators
 
 Implementation order:
 
 1. Trainer account bootstrap and trainee invitation/linking.
 2. Trainer homework form with schedule-derived, overridable due date.
-3. Trainee case page with separate PDF 1, PDF 2, and OV upload slots.
-4. Versioned private Storage upload and download.
+3. Trainee case page with separate PDF 1, PDF 2, and OV slots (OneDrive link +
+   mark/unmark sent; no binary upload for case files).
+4. Versioned private Storage upload and download (legacy; case files now use links).
 5. Trainer accept/reject decision for each file independently.
 6. Status transitions and “waiting on trainer/trainee” dashboard indicators.
 
 - Trainer sends homework with suggested and overridable due dates.
-- Trainee uploads two PDFs and one OV into separate versioned slots.
-- Trainer downloads, accepts, or requests replacement for each file separately.
+- Trainee pastes OneDrive links and marks PDF 1 / PDF 2 / OV as sent (can undo).
+- Trainer opens the link, accepts, or requests replacement for each slot.
 - Accepted files stay accepted unless the trainer explicitly reopens them.
 - Case and assignment statuses update transactionally.
 - Dashboard shows cases waiting on the trainer versus waiting on each trainee.
@@ -53,7 +54,7 @@ Exit criteria:
 
 ## 3. Revisions and corrections
 
-Status: pending until milestone 2 is reviewed
+Status: complete pending UAT — schema, RPCs, trainer editor, trainee read-only view
 
 - Eight fixed review sections
 - Multiple corrections per section

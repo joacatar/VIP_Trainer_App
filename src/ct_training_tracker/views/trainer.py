@@ -14,6 +14,7 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainer_case_review
+from ct_training_tracker.views.revisions import render_trainer_revisions
 
 
 def render_dashboard(repository: TrainingRepository) -> None:
@@ -192,7 +193,7 @@ def _assign_case(repository: TrainingRepository, *, case_row: dict) -> None:
     st.rerun()
 
 
-def render_cases(repository: TrainingRepository) -> None:
+def render_cases(repository: TrainingRepository, user_id: str) -> None:
     st.header("Cases")
     st.caption("Path: `/trainer-cases?trainee=…&case=…`")
     trainees = repository.list_active_trainees()
@@ -247,6 +248,11 @@ def render_cases(repository: TrainingRepository) -> None:
                 repository,
                 case=cases_by_id[selected["id"]],
             )
+            render_trainer_revisions(
+                repository,
+                user_id=user_id,
+                case=cases_by_id[selected["id"]],
+            )
 
 
 def render_trainer_portal(
@@ -262,6 +268,6 @@ def render_trainer_portal(
     if page == "Dashboard":
         render_dashboard(repository)
     elif page == "Cases":
-        render_cases(repository)
+        render_cases(repository, profile["id"])
     else:
         render_trainees(repository, profile["id"])

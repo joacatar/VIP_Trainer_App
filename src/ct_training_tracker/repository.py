@@ -1,7 +1,11 @@
 import datetime as dt
 from typing import Any, cast
 
-from ct_training_tracker.files import storage_object_path, validate_upload
+from ct_training_tracker.files import (
+    screenshot_storage_path,
+    storage_object_path,
+    validate_upload,
+)
 from ct_training_tracker.models import HomeworkAssignment, Profile, Trainee
 from supabase import Client
 
@@ -143,6 +147,7 @@ class TrainingRepository:
             self._client.table("file_requirements")
             .select(
                 "id, case_id, kind, status, replacement_reason, accepted_at, "
+                "external_url, "
                 "case_files(id, version_no, storage_path, original_filename, "
                 "mime_type, size_bytes, review_status, review_note, uploaded_at)"
             )
@@ -251,6 +256,42 @@ class TrainingRepository:
             },
         ).execute()
 
+    def mark_file_sent(
+        self,
+        requirement_id: str,
+        *,
+        share_url: str | None = None,
+    ) -> None:
+        self._client.rpc(
+            "mark_file_sent",
+            {
+                "target_requirement_id": requirement_id,
+                "share_url": share_url,
+            },
+        ).execute()
+
+    def unmark_file_sent(self, requirement_id: str) -> None:
+        self._client.rpc(
+            "unmark_file_sent",
+            {"target_requirement_id": requirement_id},
+        ).execute()
+
+    def review_file_requirement(
+        self,
+        *,
+        requirement_id: str,
+        decision: str,
+        note: str = "",
+    ) -> None:
+        self._client.rpc(
+            "review_file_requirement",
+            {
+                "target_requirement_id": requirement_id,
+                "decision": decision,
+                "decision_note": note,
+            },
+        ).execute()
+
     def create_signed_download_url(
         self,
         storage_path: str,
@@ -269,3 +310,166 @@ class TrainingRepository:
         if not url:
             raise RuntimeError("Could not create a download link.")
         return cast(str, url)
+
+    def list_revisions_for_case(
+        self,
+        case_id: str,
+        *,
+        published_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        query = (
+            self._client.table("revisions")
+            .select(
+                "id, case_id, revision_no, status, published_at, created_at, "
+                "revision_sections("
+                "id, section_key, sort_order, notes, "
+                "corrections("
+                "id, body, severity, status, rolled_from_correction_id, "
+                "created_at, resolved_at, "
+                "correction_screenshots("
+                "id, storage_path, original_filename, mime_type, size_bytes, created_at"
+                ")"
+                ")"
+                ")"
+            )
+            .eq("case_id", case_id)
+            .order("revision_no", desc=True)
+        )
+        if published_only:
+            query = query.eq("status", "published")
+        result = query.execute()
+        rows = cast(list[dict[str, Any]], result.data or [])
+        for revision in rows:
+            sections = sorted(
+                revision.get("revision_sections") or [],
+                key=lambda item: int(item.get("sort_order") or 0),
+            )
+            for section in sections:
+                corrections = sorted(
+                    section.get("corrections") or [],
+                    key=lambda item: str(item.get("created_at") or ""),
+                )
+                for correction in corrections:
+                    shots = sorted(
+                        correction.get("correction_screenshots") or [],
+                        key=lambda item: str(item.get("created_at") or ""),
+                    )
+                    correction["correction_screenshots"] = shots
+                section["corrections"] = corrections
+            revision["revision_sections"] = sections
+        return rows
+
+    def create_revision(self, case_id: str) -> str:
+        result = self._client.rpc(
+            "create_revision",
+            {"target_case_id": case_id},
+        ).execute()
+        return cast(str, result.data)
+
+    def publish_revision(self, revision_id: str) -> None:
+        self._client.rpc(
+            "publish_revision",
+            {"target_revision_id": revision_id},
+        ).execute()
+
+    def add_correction(
+        self,
+        *,
+        section_id: str,
+        body: str,
+        severity: str = "minor",
+    ) -> str:
+        result = self._client.rpc(
+            "add_correction",
+            {
+                "target_section_id": section_id,
+                "correction_body": body,
+                "correction_severity": severity,
+            },
+        ).execute()
+        return cast(str, result.data)
+
+    def set_correction_status(self, correction_id: str, status: str) -> None:
+        self._client.rpc(
+            "set_correction_status",
+            {
+                "target_correction_id": correction_id,
+                "next_status": status,
+            },
+        ).execute()
+
+    def get_case_owner_user_id(self, case_id: str) -> str | None:
+        result = (
+            self._client.table("cases")
+            .select("trainees(auth_user_id)")
+            .eq("id", case_id)
+            .maybe_single()
+            .execute()
+        )
+        if result is None or not result.data:
+            return None
+        trainee = result.data.get("trainees")
+        if isinstance(trainee, dict):
+            return cast(str | None, trainee.get("auth_user_id"))
+        return None
+
+    def upload_correction_screenshot(
+        self,
+        *,
+        user_id: str,
+        case_id: str,
+        correction_id: str,
+        filename: str,
+        content: bytes,
+        mime_type: str | None,
+    ) -> str:
+        owner_user_id = self.get_case_owner_user_id(case_id) or user_id
+        object_path = screenshot_storage_path(
+            owner_user_id=owner_user_id,
+            case_id=case_id,
+            correction_id=correction_id,
+            filename=filename,
+        )
+        try:
+            self._client.storage.from_(CASE_FILES_BUCKET).upload(
+                object_path,
+                content,
+                file_options={
+                    "content-type": mime_type or "application/octet-stream",
+                    "upsert": "false",
+                },
+            )
+        except Exception as exc:
+            message = str(getattr(exc, "message", None) or exc)
+            lowered = message.lower()
+            if (
+                "maximum allowed size" in lowered
+                or "entitytoolarge" in lowered
+                or "payload too large" in lowered
+            ):
+                size_mb = len(content) / (1024 * 1024)
+                raise ValueError(
+                    f"Supabase Storage rejected this screenshot ({size_mb:.1f} MB). "
+                    "Raise Storage → Settings → Global file size limit."
+                ) from exc
+            raise
+        try:
+            result = (
+                self._client.table("correction_screenshots")
+                .insert(
+                    {
+                        "correction_id": correction_id,
+                        "storage_path": object_path,
+                        "original_filename": object_path.rsplit("/", 1)[-1],
+                        "mime_type": mime_type,
+                        "size_bytes": len(content),
+                        "uploaded_by": user_id,
+                    }
+                )
+                .execute()
+            )
+        except Exception:
+            self._client.storage.from_(CASE_FILES_BUCKET).remove([object_path])
+            raise
+        rows = result.data or []
+        return cast(str, rows[0]["id"] if rows else "")
