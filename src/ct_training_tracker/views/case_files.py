@@ -7,7 +7,8 @@ from typing import Any
 import streamlit as st
 from postgrest.exceptions import APIError
 
-from ct_training_tracker.files import FILE_KIND_LABELS
+from ct_training_tracker.files import ALLOWED_EXTENSIONS, FILE_KIND_LABELS
+from ct_training_tracker.metrics import file_slot_label
 from ct_training_tracker.repository import TrainingRepository
 
 UPLOADABLE_STATUSES = {"assigned", "submitted", "awaiting_resubmission", "in_review"}
@@ -19,6 +20,37 @@ def _sorted_requirements(requirements: list[dict[str, Any]]) -> list[dict[str, A
     return sorted(requirements, key=lambda row: order.get(row["kind"], 99))
 
 
+def _uploader_type(kind: str) -> list[str] | None:
+    """Browser accept filters break on obscure compound extensions.
+
+    Keep the filter for PDFs; leave OV unrestricted and validate in Python.
+    """
+    if kind.startswith("pdf"):
+        return ["pdf"]
+    return None
+
+
+def _feedback_key(requirement_id: str) -> str:
+    return f"upload_feedback_{requirement_id}"
+
+
+def _show_feedback(requirement_id: str) -> None:
+    feedback = st.session_state.get(_feedback_key(requirement_id))
+    if not feedback:
+        return
+    level, message = feedback
+    if level == "success":
+        st.success(message)
+    elif level == "error":
+        st.error(message)
+    else:
+        st.info(message)
+
+
+def _set_feedback(requirement_id: str, level: str, message: str) -> None:
+    st.session_state[_feedback_key(requirement_id)] = (level, message)
+
+
 def render_trainee_case_uploads(
     repository: TrainingRepository,
     *,
@@ -26,7 +58,10 @@ def render_trainee_case_uploads(
     case: dict[str, Any],
 ) -> None:
     if case["status"] not in UPLOADABLE_STATUSES:
-        st.caption("This case is not ready for uploads yet.")
+        st.caption(
+            f"This case is not ready for uploads yet "
+            f"(status: {str(case['status']).replace('_', ' ')})."
+        )
         return
 
     requirements = _sorted_requirements(
@@ -34,10 +69,14 @@ def render_trainee_case_uploads(
     )
     for requirement in requirements:
         label = FILE_KIND_LABELS[requirement["kind"]]
-        status = str(requirement["status"]).replace("_", " ").title()
+        slot_state = file_slot_label(requirement["status"])
         latest = requirement.get("latest_file")
+        allowed = ALLOWED_EXTENSIONS.get(requirement["kind"], ())
+        requirement_id = requirement["id"]
+
         with st.container(border=True):
-            st.markdown(f"**{label}** · {status}")
+            st.markdown(f"**{label}** · {slot_state}")
+            _show_feedback(requirement_id)
             if requirement.get("replacement_reason"):
                 st.warning(requirement["replacement_reason"])
             if latest:
@@ -45,33 +84,74 @@ def render_trainee_case_uploads(
                     f"Latest: {latest['original_filename']} (v{latest['version_no']})"
                 )
             if requirement["status"] == "accepted":
-                st.success("Accepted — no re-upload needed.")
+                st.success("Accepted — nothing else to send for this slot.")
                 continue
 
-            uploaded = st.file_uploader(
-                f"Upload {label}",
-                type=["pdf"] if requirement["kind"].startswith("pdf") else ["ov"],
-                key=f"upload_{requirement['id']}",
-            )
-            if uploaded is None:
+            if requirement["status"] in {"submitted", "under_review"}:
+                st.success("Sent — waiting for trainer review.")
                 continue
-            if st.button(f"Submit {label}", key=f"submit_{requirement['id']}"):
+
+            if allowed:
+                st.caption(
+                    f"Required extension: {', '.join(allowed)}. "
+                    "Max size: 1 GB per file."
+                )
+
+            # Do not put file_uploader inside st.form — Streamlit often returns
+            # None on submit even when a file was selected.
+            uploaded = st.file_uploader(
+                f"Choose {label}",
+                type=_uploader_type(requirement["kind"]),
+                key=f"upload_{requirement_id}",
+            )
+            if uploaded is not None:
+                st.info(
+                    f"Selected `{uploaded.name}` · {uploaded.size:,} bytes · "
+                    f"mime `{uploaded.type or 'unknown'}`"
+                )
+
+            submit = st.button(
+                f"Submit {label}",
+                key=f"submit_{requirement_id}",
+                type="primary",
+                disabled=uploaded is None,
+            )
+            if not submit:
+                continue
+            if uploaded is None:
+                _set_feedback(
+                    requirement_id,
+                    "error",
+                    f"No file selected for {label}. Choose a file, then submit.",
+                )
+                st.rerun()
+
+            with st.spinner(f"Uploading {uploaded.name}…"):
                 try:
                     repository.upload_case_file(
                         user_id=user_id,
                         case_id=case["id"],
-                        requirement_id=requirement["id"],
+                        requirement_id=requirement_id,
                         kind=requirement["kind"],
                         filename=uploaded.name,
                         content=uploaded.getvalue(),
-                        mime_type=uploaded.type,
+                        mime_type=uploaded.type or "application/octet-stream",
                     )
                 except (APIError, ValueError, Exception) as exc:
-                    message = getattr(exc, "message", str(exc))
-                    st.error(f"Upload failed: {message}")
-                    continue
-                st.success(f"{label} submitted.")
-                st.rerun()
+                    message = getattr(exc, "message", None) or str(exc)
+                    _set_feedback(
+                        requirement_id,
+                        "error",
+                        f"Upload failed for `{uploaded.name}`: {message}",
+                    )
+                    st.rerun()
+
+            _set_feedback(
+                requirement_id,
+                "success",
+                f"{label} uploaded: `{uploaded.name}`",
+            )
+            st.rerun()
 
 
 def render_trainer_case_review(
@@ -93,12 +173,12 @@ def render_trainer_case_review(
     )
     for requirement in requirements:
         label = FILE_KIND_LABELS[requirement["kind"]]
-        status = str(requirement["status"]).replace("_", " ").title()
+        slot_state = file_slot_label(requirement["status"])
         latest = requirement.get("latest_file")
         with st.container(border=True):
-            st.markdown(f"**{label}** · {status}")
+            st.markdown(f"**{label}** · {slot_state}")
             if not latest:
-                st.caption("No file uploaded yet.")
+                st.caption("Not sent yet.")
                 continue
 
             st.caption(

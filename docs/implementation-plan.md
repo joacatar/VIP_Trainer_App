@@ -26,8 +26,8 @@ Exit criteria:
 
 ## 2. Homework and file submissions
 
-Status: in progress — case assignment and file upload/review UI implemented;
-end-to-end upload verification is next
+Status: complete pending review — assignment, uploads/review, routed case board,
+and waiting-on trainer/trainee dashboard indicators are implemented
 
 Implementation order:
 
@@ -43,6 +43,7 @@ Implementation order:
 - Trainer downloads, accepts, or requests replacement for each file separately.
 - Accepted files stay accepted unless the trainer explicitly reopens them.
 - Case and assignment statuses update transactionally.
+- Dashboard shows cases waiting on the trainer versus waiting on each trainee.
 
 Exit criteria:
 

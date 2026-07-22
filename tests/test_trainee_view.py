@@ -1,14 +1,14 @@
 from ct_training_tracker.views.case_board import enrich_cases, file_progress
 
 
-def test_file_progress_counts_only_accepted_requirements() -> None:
+def test_file_progress_shows_sent_and_to_send() -> None:
     requirements = [
         {"kind": "pdf_primary", "status": "accepted"},
-        {"kind": "pdf_secondary", "status": "replacement_requested"},
+        {"kind": "pdf_secondary", "status": "submitted"},
         {"kind": "ov", "status": "missing"},
     ]
 
-    assert file_progress(requirements) == "1 / 3 accepted"
+    assert file_progress(requirements) == "2 sent · 1 to send"
 
 
 def test_enrich_cases_merges_notes_into_case_rows() -> None:
@@ -20,7 +20,11 @@ def test_enrich_cases_merges_notes_into_case_rows() -> None:
             "status": "assigned",
             "due_date": "2026-07-28",
             "schedule_due_date": "2026-07-27",
-            "file_requirements": [{"status": "missing"}],
+            "file_requirements": [
+                {"status": "missing"},
+                {"status": "missing"},
+                {"status": "missing"},
+            ],
         }
     ]
     assignments = [
@@ -35,3 +39,4 @@ def test_enrich_cases_merges_notes_into_case_rows() -> None:
 
     assert frame.iloc[0]["notes"] == "Focus on landmarking."
     assert frame.iloc[0]["status"] == "Assigned"
+    assert frame.iloc[0]["files"] == "0 sent · 3 to send"

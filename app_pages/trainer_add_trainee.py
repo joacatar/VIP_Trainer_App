@@ -1,4 +1,4 @@
-"""Add trainee at /trainer/trainees."""
+"""Add trainee at /trainer-trainees."""
 
 from ct_training_tracker.runtime import require_runtime
 from ct_training_tracker.views.trainer import render_trainees

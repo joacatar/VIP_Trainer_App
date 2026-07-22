@@ -1,6 +1,25 @@
 from dataclasses import dataclass
 from typing import Any
 
+ACTIVE_CASE_STATUSES = {
+    "assigned",
+    "submitted",
+    "awaiting_resubmission",
+    "in_review",
+    "corrections_sent",
+}
+OPEN_TASK_STATUSES = {"assigned", "awaiting_resubmission"}
+TASK_WITH_TRAINER_STATUSES = {"submitted", "in_review", "corrections_sent"}
+TRAINEE_FILE_TODO = {"missing", "replacement_requested"}
+TRAINER_FILE_TODO = {"submitted", "under_review"}
+SENT_FILE_STATUSES = {"submitted", "under_review"}
+UPLOADED_FILE_STATUSES = {
+    "submitted",
+    "under_review",
+    "accepted",
+    "replacement_requested",
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ProgressTotals:
@@ -8,8 +27,25 @@ class ProgressTotals:
     total_cases: int
     approved_cases: int
     overdue_cases: int
+    waiting_on_trainer: int
+    waiting_on_trainee: int
     total_files: int
     accepted_files: int
+
+
+@dataclass(frozen=True, slots=True)
+class TaskCounts:
+    open_tasks: int
+    with_trainer: int
+    approved: int
+    overdue: int
+
+
+@dataclass(frozen=True, slots=True)
+class FileWaitingCounts:
+    to_send: int
+    sent: int
+    accepted: int
 
 
 def summarize_progress(rows: list[dict[str, Any]]) -> ProgressTotals:
@@ -18,6 +54,89 @@ def summarize_progress(rows: list[dict[str, Any]]) -> ProgressTotals:
         total_cases=sum(int(row["total_cases"]) for row in rows),
         approved_cases=sum(int(row["approved_cases"]) for row in rows),
         overdue_cases=sum(int(row["overdue_cases"]) for row in rows),
+        waiting_on_trainer=sum(int(row.get("waiting_on_trainer", 0)) for row in rows),
+        waiting_on_trainee=sum(int(row.get("waiting_on_trainee", 0)) for row in rows),
         total_files=sum(int(row["total_files"]) for row in rows),
         accepted_files=sum(int(row["accepted_files"]) for row in rows),
     )
+
+
+def count_tasks(cases: list[dict[str, Any]]) -> TaskCounts:
+    open_tasks = 0
+    with_trainer = 0
+    approved = 0
+    overdue = 0
+    for case in cases:
+        status = case.get("status")
+        if status in OPEN_TASK_STATUSES:
+            open_tasks += 1
+        elif status in TASK_WITH_TRAINER_STATUSES:
+            with_trainer += 1
+        elif status == "approved":
+            approved += 1
+        due = case.get("due_date") or case.get("schedule_due_date")
+        if status != "approved" and due:
+            try:
+                from datetime import date
+
+                if date.fromisoformat(str(due)) < date.today():
+                    overdue += 1
+            except ValueError:
+                pass
+    return TaskCounts(
+        open_tasks=open_tasks,
+        with_trainer=with_trainer,
+        approved=approved,
+        overdue=overdue,
+    )
+
+
+def count_file_waiting(cases: list[dict[str, Any]]) -> FileWaitingCounts:
+    """File-slot counts: to send / sent / accepted."""
+    to_send = 0
+    sent = 0
+    accepted = 0
+    for case in cases:
+        requirements = case.get("file_requirements") or []
+        if not isinstance(requirements, list):
+            continue
+        active = case.get("status") in ACTIVE_CASE_STATUSES
+        for requirement in requirements:
+            if not isinstance(requirement, dict):
+                continue
+            status = requirement.get("status")
+            if status == "accepted":
+                accepted += 1
+            elif status in SENT_FILE_STATUSES:
+                sent += 1
+            elif active and status in TRAINEE_FILE_TODO:
+                to_send += 1
+    return FileWaitingCounts(to_send=to_send, sent=sent, accepted=accepted)
+
+
+def file_slot_label(status: str) -> str:
+    if status == "accepted":
+        return "Accepted"
+    if status in SENT_FILE_STATUSES:
+        return "Sent"
+    if status == "replacement_requested":
+        return "To send (replace)"
+    if status == "missing":
+        return "To send"
+    return str(status).replace("_", " ").title()
+
+
+def waiting_label(row: dict[str, Any]) -> str:
+    """Human-readable next-action summary for one trainee."""
+    sent = int(row.get("waiting_on_trainer", 0))
+    to_send = int(row.get("waiting_on_trainee", 0))
+    overdue = int(row.get("overdue_cases", 0))
+
+    parts: list[str] = []
+    if sent:
+        parts.append(f"Sent files to review: {sent}")
+    if to_send:
+        parts.append(f"Files to send: {to_send}")
+    if overdue:
+        parts.append(f"Overdue tasks: {overdue}")
+    return " · ".join(parts) if parts else "Clear"

@@ -12,13 +12,25 @@ from ct_training_tracker.routing import query_value, set_query
 
 def file_progress(requirements: object) -> str:
     if not isinstance(requirements, list):
-        return "0 / 3 accepted"
-    accepted = sum(
-        requirement.get("status") == "accepted"
-        for requirement in requirements
-        if isinstance(requirement, dict)
-    )
-    return f"{accepted} / 3 accepted"
+        return "0 sent · 3 to send"
+    sent = 0
+    accepted = 0
+    to_send = 0
+    for requirement in requirements:
+        if not isinstance(requirement, dict):
+            continue
+        status = requirement.get("status")
+        if status == "accepted":
+            accepted += 1
+        elif status in {"submitted", "under_review"}:
+            sent += 1
+        elif status in {"missing", "replacement_requested"}:
+            to_send += 1
+    if to_send:
+        return f"{sent + accepted} sent · {to_send} to send"
+    if accepted == 3:
+        return "3/3 accepted"
+    return f"{sent} sent · {accepted} accepted"
 
 
 def homework_by_case_id(
