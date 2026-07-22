@@ -14,6 +14,10 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainer_case_review
+from ct_training_tracker.views.questions import (
+    render_trainer_case_questions,
+    render_trainer_question_inbox,
+)
 from ct_training_tracker.views.revisions import render_trainer_revisions
 
 
@@ -26,7 +30,8 @@ def render_dashboard(repository: TrainingRepository) -> None:
         return
 
     totals = summarize_progress(rows)
-    columns = st.columns(4)
+    open_questions = repository.count_open_questions()
+    columns = st.columns(5)
     columns[0].metric(
         "Tasks done",
         f"{totals.approved_cases}/{totals.total_cases}",
@@ -47,6 +52,13 @@ def render_dashboard(repository: TrainingRepository) -> None:
         totals.waiting_on_trainee,
         help="File slots trainees still need to prepare or replace.",
     )
+    columns[4].metric(
+        "Open questions",
+        open_questions,
+        help="Trainee questions waiting for your answer.",
+    )
+
+    render_trainer_question_inbox(repository)
 
     attention = [
         row
@@ -243,10 +255,11 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
             st.markdown("##### Assign")
             _assign_case(repository, case_row=selected)
         else:
-            files_tab, review_tab = st.tabs(
+            files_tab, review_tab, questions_tab = st.tabs(
                 [
                     ":material/folder: Files",
                     ":material/rate_review: Review",
+                    ":material/help: Questions",
                 ]
             )
             with files_tab:
@@ -256,6 +269,12 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
                 )
             with review_tab:
                 render_trainer_revisions(
+                    repository,
+                    user_id=user_id,
+                    case=cases_by_id[selected["id"]],
+                )
+            with questions_tab:
+                render_trainer_case_questions(
                     repository,
                     user_id=user_id,
                     case=cases_by_id[selected["id"]],

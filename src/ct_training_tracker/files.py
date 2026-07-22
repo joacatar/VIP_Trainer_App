@@ -107,3 +107,17 @@ def screenshot_storage_path(
     """Store under the trainee auth user folder so they can download via RLS."""
     safe_name = validate_screenshot(filename)
     return f"{owner_user_id}/{case_id}/screenshots/{correction_id}/{safe_name}"
+
+
+def question_screenshot_storage_path(
+    *,
+    owner_user_id: str,
+    case_id: str,
+    question_id: str,
+    filename: str,
+) -> str:
+    safe_name = validate_screenshot(filename)
+    return (
+        f"{owner_user_id}/{case_id}/question-screenshots/"
+        f"{question_id}/{safe_name}"
+    )
