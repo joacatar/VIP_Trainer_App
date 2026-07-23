@@ -59,6 +59,7 @@ Streamlit and Supabase.
 
 5. Copy `.streamlit/secrets.example.toml` to `.streamlit/secrets.toml` and enter the
    project URL and publishable key. Never put a secret or service-role key in the app.
+   See `docs/environments.md` for Dev vs Prod project refs.
 
 ## Run locally
 

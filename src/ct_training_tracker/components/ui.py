@@ -8,6 +8,8 @@ from typing import Any, Literal
 
 import streamlit as st
 
+from ct_training_tracker.case_labels import case_title
+
 StatusColor = Literal[
     "red", "orange", "yellow", "blue", "green", "violet", "gray", "grey", "primary"
 ]
@@ -70,12 +72,15 @@ def render_case_header(
     next_action = case.get("next_step")
 
     def _body() -> None:
-        st.subheader(f"Set {case['set_no']} · Case {case['case_no']}")
+        st.subheader(case_title(case))
         summary, status_column = st.columns([2, 1], vertical_alignment="center")
         with summary:
             due_date = case.get("due_date") or "—"
+            order = case.get("order_number")
+            order_bit = f"Order {order} · " if order else ""
             st.caption(
-                f"Due {due_date} · {case.get('files') or 'No file status yet'}"
+                f"{order_bit}Due {due_date} · "
+                f"{case.get('files') or 'No file status yet'}"
             )
             if next_action:
                 st.markdown(f"**Next:** {next_action}")

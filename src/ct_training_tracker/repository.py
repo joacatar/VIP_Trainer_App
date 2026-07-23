@@ -41,6 +41,30 @@ class TrainingRepository:
         )
         return cast(list[dict[str, Any]], result.data or [])
 
+    def list_case_training_metrics(self) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("case_training_metrics")
+            .select(
+                "case_id, trainee_id, trainee_name, set_no, case_no, "
+                "catalog_label, order_number, status, schedule_due_date, "
+                "due_date, approved_at, assigned_at, first_submitted_at, "
+                "submit_count, revision_publish_count, "
+                "replacement_request_count, first_trainer_response_at"
+            )
+            .execute()
+        )
+        return cast(list[dict[str, Any]], result.data or [])
+
+    def list_correction_section_stats(self) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("correction_section_stats")
+            .select(
+                "section_key, correction_count, open_count, rolled_forward_count"
+            )
+            .execute()
+        )
+        return cast(list[dict[str, Any]], result.data or [])
+
     def list_active_trainees(self) -> list[Trainee]:
         result = (
             self._client.table("trainees")
@@ -68,11 +92,12 @@ class TrainingRepository:
         include_files: bool = False,
     ) -> list[dict[str, Any]]:
         columns = (
-            "id, set_no, case_no, status, schedule_due_date, due_date, "
-            "estimated_completion_date, file_requirements(kind, status)"
+            "id, set_no, case_no, catalog_label, order_number, status, "
+            "schedule_due_date, due_date, estimated_completion_date, "
+            "file_requirements(kind, status)"
             if include_files
-            else "id, set_no, case_no, phase, status, schedule_due_date, due_date, "
-            "estimated_completion_date"
+            else "id, set_no, case_no, catalog_label, order_number, phase, "
+            "status, schedule_due_date, due_date, estimated_completion_date"
         )
         result = (
             self._client.table("cases")
@@ -134,7 +159,8 @@ class TrainingRepository:
             self._client.table("homework_assignments")
             .select(
                 "id, case_id, title, instructions, status, schedule_due_date, "
-                "due_date, estimated_due_date, cases(set_no, case_no)"
+                "due_date, estimated_due_date, "
+                "cases(set_no, case_no, catalog_label, order_number)"
             )
             .in_("case_id", case_ids)
             .neq("status", "cancelled")
@@ -567,7 +593,8 @@ class TrainingRepository:
             self._client.table("questions")
             .select(
                 "id, case_id, section_key, body, status, created_at, "
-                "cases(set_no, case_no, trainee_id, trainees(full_name))"
+                "cases(set_no, case_no, catalog_label, order_number, "
+                "trainee_id, trainees(full_name))"
             )
             .eq("status", "open")
             .order("created_at", desc=False)
