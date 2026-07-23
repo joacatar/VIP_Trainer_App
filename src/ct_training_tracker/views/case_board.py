@@ -7,6 +7,12 @@ from typing import Any, Literal
 import pandas as pd
 import streamlit as st
 
+from ct_training_tracker.case_labels import (
+    case_catalog_label,
+    case_label,
+    case_order_number,
+    case_title,
+)
 from ct_training_tracker.components.ui import render_case_header, status_color
 from ct_training_tracker.metrics import (
     AppRole,
@@ -93,6 +99,8 @@ def enrich_cases(
                 "id": case["id"],
                 "set_no": case["set_no"],
                 "case_no": case["case_no"],
+                "catalog_label": case_catalog_label(case),
+                "order_number": case_order_number(case),
                 "status": raw_status.replace("_", " ").title(),
                 "due_date": case.get("due_date") or case.get("schedule_due_date"),
                 "schedule_due_date": case.get("schedule_due_date"),
@@ -169,11 +177,6 @@ def pick_next_case(
     return row.to_dict()
 
 
-def case_label(row: dict[str, Any] | pd.Series) -> str:
-    """Short label kept for tests and compact selectors."""
-    return f"Case {row['case_no']}"
-
-
 def _render_case_row(
     row: dict[str, Any],
     *,
@@ -184,7 +187,7 @@ def _render_case_row(
     with st.container(border=True):
         title_col, badge_col = st.columns([2.1, 1.1], vertical_alignment="center")
         clicked = title_col.button(
-            f"Case {row['case_no']}",
+            case_label(row),
             key=key,
             type="primary" if selected else "secondary",
             width="content",
@@ -315,7 +318,7 @@ def render_next_case_card(
         st.markdown("**Your next case**")
         title, action = st.columns([2.4, 1], vertical_alignment="center")
         with title:
-            st.write(f"Set {row['set_no']} · Case {row['case_no']}")
+            st.write(case_title(row))
             st.caption(
                 f"{row.get('next_step') or row['status']} · "
                 f"Due {row.get('due_date') or '—'} · {row.get('files')}"

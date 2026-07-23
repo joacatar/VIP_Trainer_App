@@ -7,6 +7,7 @@ from typing import Any
 import streamlit as st
 from postgrest.exceptions import APIError
 
+from ct_training_tracker.case_labels import case_catalog_label, case_order_number
 from ct_training_tracker.components.paste_image import (
     PastedImage,
     clear_comment_draft,
@@ -230,10 +231,11 @@ def render_trainer_question_inbox(repository: TrainingRepository) -> None:
         case = row.get("cases") if isinstance(row.get("cases"), dict) else {}
         trainee = case.get("trainees") if isinstance(case.get("trainees"), dict) else {}
         trainee_name = trainee.get("full_name") or "Trainee"
-        set_no = case.get("set_no")
-        case_no = case.get("case_no")
+        label = case_catalog_label(case) if case else "?"
+        order = case_order_number(case) if case else None
+        case_bit = f"Case {label}" + (f" · {order}" if order else "")
         title = (
-            f"{trainee_name} · Set {set_no} Case {case_no} · "
+            f"{trainee_name} · {case_bit} · "
             f"{question_section_label(row.get('section_key'))}"
         )
         with st.container(border=True):

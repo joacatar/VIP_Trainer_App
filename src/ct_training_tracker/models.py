@@ -17,6 +17,8 @@ class Trainee(TypedDict):
 class HomeworkCase(TypedDict):
     set_no: int
     case_no: int
+    catalog_label: str
+    order_number: str
 
 
 class HomeworkAssignment(TypedDict):

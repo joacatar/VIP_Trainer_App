@@ -300,29 +300,18 @@ protocol OK vs needs-work
 
 ## 4. Questions
 
-Status: in progress — schema, ask/answer RPCs, trainee tab, trainer inbox
-
-- Case/section-linked trainee questions
-- Trainer unanswered-question inbox on the dashboard
-- Screenshot attachments (paste in comment box)
-- Open / answered / resolved status
-- Tracking events for ask, answer, and status changes
-
-Exit criteria:
-
-- Every question has an owner, timestamp, context, and response state.
-- Questions cannot be lost inside free-form correction notes.
+Status: complete pending UAT — ask/answer, inbox, screenshots, status lifecycle
 
 ## 5. Metrics and forecasting
 
-Status: pending until milestone 4 is reviewed
+Status: complete pending UAT — event-derived views + dashboard Performance section
 
-- First-pass file acceptance
-- Revision and resubmission counts
-- Trainer and trainee turnaround time
-- Recurring corrections by section
-- Planned versus actual dates
-- Estimated phase completion using observed pace
+- First-pass file/package acceptance rate
+- Published revision and resubmission counts
+- Trainer and trainee turnaround time from tracking events
+- Recurring corrections by section (published revisions)
+- Planned versus actual approval dates
+- Estimated phase completion using observed assign→approve pace
 
 Exit criteria:
 

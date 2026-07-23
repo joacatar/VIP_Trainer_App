@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from postgrest.exceptions import APIError
 
+from ct_training_tracker.case_labels import case_title
 from ct_training_tracker.components.ui import (
     constrained_width,
     render_case_header,
@@ -20,6 +21,7 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainer_case_review
+from ct_training_tracker.views.metrics import render_training_analytics
 from ct_training_tracker.views.questions import (
     render_trainer_case_questions,
     render_trainer_question_inbox,
@@ -155,6 +157,8 @@ def render_dashboard(repository: TrainingRepository) -> None:
             width="stretch",
         )
 
+    render_training_analytics(repository)
+
 
 def render_trainees(repository: TrainingRepository, user_id: str) -> None:
     render_page_header(
@@ -244,7 +248,7 @@ def _assign_case(
     try:
         repository.assign_homework(
             case_id=case_row["id"],
-            title=f"Set {case_row['set_no']} · Case {case_row['case_no']}",
+            title=case_title(case_row),
             instructions=notes,
             schedule_due_date=schedule_due,
             due_date=due_date,
@@ -253,7 +257,7 @@ def _assign_case(
         st.error(f"Could not assign case: {exc.message}")
         return
 
-    st.success(f"Set {case_row['set_no']} · Case {case_row['case_no']} assigned.")
+    st.success(f"{case_title(case_row)} assigned.")
     st.rerun()
 
 
