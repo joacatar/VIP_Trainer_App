@@ -33,9 +33,10 @@ class TrainingRepository:
         result = (
             self._client.table("trainee_progress")
             .select(
-                "trainee_id, full_name, current_phase, total_cases, approved_cases, "
-                "overdue_cases, waiting_on_trainer, waiting_on_trainee, "
-                "total_files, accepted_files, estimated_completion_date"
+                "trainee_id, full_name, current_phase, is_test, total_cases, "
+                "approved_cases, overdue_cases, waiting_on_trainer, "
+                "waiting_on_trainee, total_files, accepted_files, "
+                "estimated_completion_date"
             )
             .execute()
         )
@@ -45,10 +46,10 @@ class TrainingRepository:
         result = (
             self._client.table("case_training_metrics")
             .select(
-                "case_id, trainee_id, trainee_name, set_no, case_no, "
-                "catalog_label, order_number, status, schedule_due_date, "
-                "due_date, approved_at, assigned_at, first_submitted_at, "
-                "submit_count, revision_publish_count, "
+                "case_id, trainee_id, trainee_name, trainee_is_test, set_no, "
+                "case_no, catalog_label, order_number, status, "
+                "schedule_due_date, due_date, approved_at, assigned_at, "
+                "first_submitted_at, submit_count, revision_publish_count, "
                 "replacement_request_count, first_trainer_response_at"
             )
             .execute()
@@ -68,7 +69,7 @@ class TrainingRepository:
     def list_active_trainees(self) -> list[Trainee]:
         result = (
             self._client.table("trainees")
-            .select("id, full_name, start_date, current_phase")
+            .select("id, full_name, start_date, current_phase, is_test")
             .eq("active", True)
             .order("full_name")
             .execute()
@@ -85,29 +86,48 @@ class TrainingRepository:
         )
         return cast(Trainee | None, result.data if result is not None else None)
 
+    def _case_columns(self, *, include_files: bool) -> str:
+        if include_files:
+            return (
+                "id, set_no, case_no, catalog_label, order_number, status, "
+                "schedule_due_date, due_date, estimated_completion_date, "
+                "file_requirements(kind, status)"
+            )
+        return (
+            "id, set_no, case_no, catalog_label, order_number, phase, "
+            "status, schedule_due_date, due_date, estimated_completion_date"
+        )
+
     def list_cases(
         self,
         trainee_id: str,
         *,
         include_files: bool = False,
     ) -> list[dict[str, Any]]:
-        columns = (
-            "id, set_no, case_no, catalog_label, order_number, status, "
-            "schedule_due_date, due_date, estimated_completion_date, "
-            "file_requirements(kind, status)"
-            if include_files
-            else "id, set_no, case_no, catalog_label, order_number, phase, "
-            "status, schedule_due_date, due_date, estimated_completion_date"
-        )
         result = (
             self._client.table("cases")
-            .select(columns)
+            .select(self._case_columns(include_files=include_files))
             .eq("trainee_id", trainee_id)
             .order("set_no")
             .order("case_no")
             .execute()
         )
         return cast(list[dict[str, Any]], result.data or [])
+
+    def get_case(
+        self,
+        case_id: str,
+        *,
+        include_files: bool = False,
+    ) -> dict[str, Any] | None:
+        result = (
+            self._client.table("cases")
+            .select(self._case_columns(include_files=include_files))
+            .eq("id", case_id)
+            .maybe_single()
+            .execute()
+        )
+        return cast(dict[str, Any] | None, result.data if result is not None else None)
 
     def create_trainee(
         self,
@@ -117,6 +137,7 @@ class TrainingRepository:
         start_date: dt.date,
         timezone: str,
         created_by: str,
+        is_test: bool = False,
     ) -> None:
         self._client.table("trainees").insert(
             {
@@ -125,6 +146,7 @@ class TrainingRepository:
                 "start_date": start_date.isoformat(),
                 "timezone": timezone,
                 "created_by": created_by,
+                "is_test": is_test,
             }
         ).execute()
 

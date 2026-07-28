@@ -104,8 +104,7 @@ def render_trainee_case_workspace(
             st.switch_page("app_pages/trainee_cases.py")
         return
 
-    cases = repository.list_cases(trainee["id"], include_files=True)
-    case = next((row for row in cases if row["id"] == case_id), None)
+    case = repository.get_case(case_id, include_files=True)
     if case is None:
         st.error("This case is unavailable or the link is no longer valid.")
         if st.button("Back to my cases", icon=":material/arrow_back:"):
@@ -134,21 +133,30 @@ def render_trainee_case_workspace(
             ":material/folder: Files",
             ":material/rate_review: Feedback",
             ":material/help: Questions",
-        ]
+        ],
+        key=f"trainee_case_tabs_{case_id}",
+        on_change="rerun",
     )
-    with files_tab:
-        st.caption(
-            f"Package {file_counts.sent} ready · {file_counts.to_send} to send · "
-            f"{file_counts.accepted} accepted"
-        )
-        trainer_name = repository.get_trainer_display_name_for_trainee(trainee["id"])
-        render_trainee_case_uploads(
-            repository,
-            user_id=profile["id"],
-            case=case,
-            trainer_name=trainer_name,
-        )
-    with review_tab:
-        render_trainee_revisions(repository, case=case)
-    with questions_tab:
-        render_trainee_questions(repository, user_id=profile["id"], case=case)
+    if files_tab.open:
+        with files_tab:
+            st.caption(
+                f"Package {file_counts.sent} ready · {file_counts.to_send} to send · "
+                f"{file_counts.accepted} accepted"
+            )
+            trainer_name = repository.get_trainer_display_name_for_trainee(
+                trainee["id"]
+            )
+            render_trainee_case_uploads(
+                repository,
+                user_id=profile["id"],
+                case=case,
+                trainer_name=trainer_name,
+            )
+    if review_tab.open:
+        with review_tab:
+            render_trainee_revisions(repository, case=case)
+    if questions_tab.open:
+        with questions_tab:
+            render_trainee_questions(
+                repository, user_id=profile["id"], case=case
+            )

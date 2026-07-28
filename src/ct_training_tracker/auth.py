@@ -10,6 +10,7 @@ SESSION_KEYS = ("access_token", "refresh_token", "user_id")
 def clear_session(session: MutableMapping[str, Any]) -> None:
     for key in SESSION_KEYS:
         session.pop(key, None)
+    session.pop("_storage_bytes_cache", None)
 
 
 def create_authenticated_client(
