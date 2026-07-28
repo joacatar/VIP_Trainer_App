@@ -7,6 +7,7 @@ from typing import Any
 import streamlit as st
 from postgrest.exceptions import APIError
 
+from ct_training_tracker.case_labels import case_catalog_label, case_order_number
 from ct_training_tracker.components.paste_image import (
     PastedImage,
     clear_comment_draft,
@@ -30,10 +31,13 @@ def _render_question_screenshots(
 ) -> None:
     if not screenshots:
         return
+
+    from ct_training_tracker.storage_cache import cached_storage_bytes
+
     loaded: list[tuple[dict[str, Any], bytes | None, str | None]] = []
     for shot in screenshots:
         try:
-            data = repository.download_storage_bytes(shot["storage_path"])
+            data = cached_storage_bytes(repository, shot["storage_path"])
             loaded.append((shot, data, None))
         except Exception as exc:
             loaded.append((shot, None, str(exc)))
@@ -41,31 +45,27 @@ def _render_question_screenshots(
     visible = [(shot, data) for shot, data, _error in loaded if data is not None]
     if visible:
         cols = st.columns(min(4, len(visible)))
-        for col, (_shot, data) in zip(cols, visible, strict=False):
+        for index, (col, (shot, data)) in enumerate(
+            zip(cols, visible, strict=False)
+        ):
             with col:
                 st.image(data, width="stretch")
+                try:
+                    url = repository.create_signed_download_url(shot["storage_path"])
+                    st.link_button(
+                        "Open",
+                        url,
+                        width="stretch",
+                        key=f"{key_prefix}_open_{shot.get('id', index)}",
+                    )
+                except Exception:
+                    pass
 
-    for index, (shot, data, error) in enumerate(loaded):
+    for index, (shot, _data, error) in enumerate(loaded):
+        if error is None:
+            continue
         label = shot.get("original_filename") or f"Screenshot {index + 1}"
-        with st.expander(
-            f"Expand · {label}",
-            expanded=len(loaded) == 1,
-            icon=":material/zoom_in:",
-        ):
-            if data is None:
-                st.error(f"Could not load screenshot: {error}")
-                continue
-            st.image(data, width="stretch")
-            try:
-                url = repository.create_signed_download_url(shot["storage_path"])
-                st.link_button(
-                    "Open full size",
-                    url,
-                    width="stretch",
-                    key=f"{key_prefix}_open_{shot.get('id', index)}",
-                )
-            except Exception as exc:
-                st.caption(f"Open link unavailable: {exc}")
+        st.error(f"{label}: could not load — {error}")
 
 
 def _status_badge(status: str) -> None:
@@ -230,10 +230,11 @@ def render_trainer_question_inbox(repository: TrainingRepository) -> None:
         case = row.get("cases") if isinstance(row.get("cases"), dict) else {}
         trainee = case.get("trainees") if isinstance(case.get("trainees"), dict) else {}
         trainee_name = trainee.get("full_name") or "Trainee"
-        set_no = case.get("set_no")
-        case_no = case.get("case_no")
+        label = case_catalog_label(case) if case else "?"
+        order = case_order_number(case) if case else None
+        case_bit = f"Case {label}" + (f" · {order}" if order else "")
         title = (
-            f"{trainee_name} · Set {set_no} Case {case_no} · "
+            f"{trainee_name} · {case_bit} · "
             f"{question_section_label(row.get('section_key'))}"
         )
         with st.container(border=True):

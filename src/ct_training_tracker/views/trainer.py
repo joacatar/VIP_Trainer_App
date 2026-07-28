@@ -4,6 +4,7 @@ import pandas as pd
 import streamlit as st
 from postgrest.exceptions import APIError
 
+from ct_training_tracker.case_labels import case_title
 from ct_training_tracker.components.ui import (
     constrained_width,
     render_case_header,
@@ -14,12 +15,18 @@ from ct_training_tracker.metrics import summarize_progress, waiting_label
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.routing import query_value, set_query
+from ct_training_tracker.trainee_filters import (
+    SHOW_TEST_TRAINEES_KEY,
+    filter_trainees,
+    trainee_display_name,
+)
 from ct_training_tracker.views.case_board import (
     enrich_cases,
     render_case_summary,
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainer_case_review
+from ct_training_tracker.views.metrics import render_training_analytics
 from ct_training_tracker.views.questions import (
     render_trainer_case_questions,
     render_trainer_question_inbox,
@@ -32,9 +39,26 @@ def render_dashboard(repository: TrainingRepository) -> None:
         "Training overview",
         "Start with what needs you, then scan trainee progress.",
     )
-    rows = repository.list_progress()
+    include_test = st.toggle(
+        "Show test trainees",
+        key=SHOW_TEST_TRAINEES_KEY,
+        help="Practice accounts tagged as Test stay hidden unless this is on.",
+    )
+
+    rows = filter_trainees(
+        repository.list_progress(),
+        include_test=include_test,
+    )
     if not rows:
-        st.info("No trainees yet. Add the first trainee to generate their 32 cases.")
+        if include_test:
+            st.info(
+                "No trainees yet. Add the first trainee to generate their 32 cases."
+            )
+        else:
+            st.info(
+                "No live trainees to show. Turn on **Show test trainees** to see "
+                "practice accounts, or add a real trainee."
+            )
         return
 
     totals = summarize_progress(rows)
@@ -101,7 +125,7 @@ def render_dashboard(repository: TrainingRepository) -> None:
             with st.container(border=True):
                 left, right = st.columns([3, 1], vertical_alignment="center")
                 left.markdown(
-                    f"**{row['full_name']}**  \n"
+                    f"**{trainee_display_name(row)}**  \n"
                     f"{waiting_label(row)}"
                 )
                 if right.button(
@@ -117,6 +141,7 @@ def render_dashboard(repository: TrainingRepository) -> None:
                     )
 
     frame = pd.DataFrame(rows)
+    frame["display_name"] = frame.apply(trainee_display_name, axis=1)
     frame["case_progress"] = (
         frame["approved_cases"].astype(str) + " / " + frame["total_cases"].astype(str)
     )
@@ -128,7 +153,7 @@ def render_dashboard(repository: TrainingRepository) -> None:
         st.dataframe(
             frame[
                 [
-                    "full_name",
+                    "display_name",
                     "current_phase",
                     "case_progress",
                     "file_progress",
@@ -140,7 +165,7 @@ def render_dashboard(repository: TrainingRepository) -> None:
                 ]
             ].rename(
                 columns={
-                    "full_name": "Trainee",
+                    "display_name": "Trainee",
                     "current_phase": "Phase",
                     "case_progress": "Cases",
                     "file_progress": "Files",
@@ -154,6 +179,8 @@ def render_dashboard(repository: TrainingRepository) -> None:
             hide_index=True,
             width="stretch",
         )
+
+    render_training_analytics(repository, include_test=include_test)
 
 
 def render_trainees(repository: TrainingRepository, user_id: str) -> None:
@@ -169,6 +196,10 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
             timezone = st.selectbox(
                 "Timezone",
                 ["Australia/Sydney", "America/New_York"],
+            )
+            is_test = st.checkbox(
+                "Mark as test trainee",
+                help="Hidden from the main dashboard unless Show test trainees is on.",
             )
             st.info(
                 "This will automatically create 32 cases and 96 file requirements.",
@@ -193,6 +224,7 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
             start_date=start_date,
             timezone=timezone,
             created_by=user_id,
+            is_test=is_test,
         )
     except APIError as exc:
         st.error(f"Could not create trainee: {exc.message}")
@@ -244,7 +276,7 @@ def _assign_case(
     try:
         repository.assign_homework(
             case_id=case_row["id"],
-            title=f"Set {case_row['set_no']} · Case {case_row['case_no']}",
+            title=case_title(case_row),
             instructions=notes,
             schedule_due_date=schedule_due,
             due_date=due_date,
@@ -253,7 +285,7 @@ def _assign_case(
         st.error(f"Could not assign case: {exc.message}")
         return
 
-    st.success(f"Set {case_row['set_no']} · Case {case_row['case_no']} assigned.")
+    st.success(f"{case_title(case_row)} assigned.")
     st.rerun()
 
 
@@ -263,12 +295,27 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
         "Cases",
         "Assign homework from the inbox. Open Review only when a package is ready.",
     )
-    trainees = repository.list_active_trainees()
+    include_test = st.toggle(
+        "Show test trainees",
+        key=SHOW_TEST_TRAINEES_KEY,
+        help="Practice accounts tagged as Test stay hidden unless this is on.",
+    )
+
+    trainees = filter_trainees(
+        [dict(row) for row in repository.list_active_trainees()],
+        include_test=include_test,
+    )
     if not trainees:
-        st.info("Add a trainee first.")
+        if include_test:
+            st.info("Add a trainee first.")
+        else:
+            st.info(
+                "No live trainees. Turn on **Show test trainees** to open practice "
+                "accounts, or add a real trainee."
+            )
         return
 
-    labels = {row["id"]: row["full_name"] for row in trainees}
+    labels = {row["id"]: trainee_display_name(row) for row in trainees}
     trainee_ids = list(labels)
     requested_trainee = query_value("trainee")
     trainee_index = (
@@ -357,8 +404,7 @@ def render_trainer_case_workspace(
             st.switch_page("app_pages/trainer_cases.py")
         return
 
-    cases = repository.list_cases(trainee_id, include_files=True)
-    case = next((row for row in cases if row["id"] == case_id), None)
+    case = repository.get_case(case_id, include_files=True)
     if case is None:
         st.error("This case is unavailable or the link is no longer valid.")
         if st.button("Back to cases", icon=":material/arrow_back:"):
@@ -400,14 +446,19 @@ def render_trainer_case_workspace(
             ":material/folder: Files",
             ":material/rate_review: Feedback",
             ":material/help: Questions",
-        ]
+        ],
+        key=f"trainer_review_tabs_{case_id}",
+        on_change="rerun",
     )
-    with files_tab:
-        render_trainer_case_review(repository, case=case)
-    with review_tab:
-        render_trainer_revisions(repository, user_id=user_id, case=case)
-    with questions_tab:
-        render_trainer_case_questions(repository, user_id=user_id, case=case)
+    if files_tab.open:
+        with files_tab:
+            render_trainer_case_review(repository, case=case)
+    if review_tab.open:
+        with review_tab:
+            render_trainer_revisions(repository, user_id=user_id, case=case)
+    if questions_tab.open:
+        with questions_tab:
+            render_trainer_case_questions(repository, user_id=user_id, case=case)
 
 
 def render_trainer_portal(

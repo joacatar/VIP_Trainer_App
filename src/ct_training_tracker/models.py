@@ -12,11 +12,14 @@ class Trainee(TypedDict):
     full_name: str
     current_phase: str
     start_date: str
+    is_test: bool
 
 
 class HomeworkCase(TypedDict):
     set_no: int
     case_no: int
+    catalog_label: str
+    order_number: str
 
 
 class HomeworkAssignment(TypedDict):

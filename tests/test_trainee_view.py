@@ -45,6 +45,8 @@ def test_enrich_cases_merges_notes_into_case_rows() -> None:
     frame = enrich_cases(cases, assignments, role="trainee")
 
     assert frame.iloc[0]["notes"] == "Focus on landmarking."
+    assert frame.iloc[0]["catalog_label"] == "1A"
+    assert frame.iloc[0]["order_number"] == "12-26-02-0002"
     assert frame.iloc[0]["status"] == "Assigned"
     assert frame.iloc[0]["files"] == "0 ready · 3 to send"
     assert frame.iloc[0]["owner"] == "trainee"
