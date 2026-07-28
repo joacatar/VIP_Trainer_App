@@ -7,6 +7,7 @@ from typing import Any
 import streamlit as st
 from postgrest.exceptions import APIError
 
+from ct_training_tracker.case_labels import case_title
 from ct_training_tracker.components.paste_image import (
     PastedImage,
     clear_comment_draft,
@@ -25,6 +26,17 @@ from ct_training_tracker.revisions import (
 from ct_training_tracker.storage_cache import cached_storage_bytes
 
 KIND_ORDER = ("pdf_primary", "pdf_secondary", "ov")
+
+
+def _render_feedback_context(case: dict[str, Any]) -> None:
+    """Repeat critical case identity inside Feedback to prevent mix-ups."""
+    with st.container(border=True, horizontal=True, vertical_alignment="center"):
+        with st.container():
+            st.caption("Currently reviewing")
+            st.markdown(f"**{case.get('trainee_name') or 'Trainee'}**")
+        with st.container():
+            st.caption("Case")
+            st.markdown(f"**{case_title(case)}**")
 
 
 def _sorted_requirements(requirements: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -210,6 +222,7 @@ def render_trainer_revisions(
     case: dict[str, Any],
 ) -> None:
     st.subheader("Feedback")
+    _render_feedback_context(case)
     status = case["status"]
     requirements = _sorted_requirements(
         repository.list_requirements_for_case(case["id"])
@@ -302,44 +315,50 @@ def render_trainer_revisions(
         editable=is_draft or can_edit_files,
     )
 
-    if is_draft:
-        st.markdown("#### 2. Section feedback")
-        st.caption(
-            "Empty sections stay OK. Only save feedback where something is wrong."
-        )
+    st.markdown("#### 2. Section feedback")
+    st.caption(
+        "Open a section to see every saved correction and add another entry."
+    )
     _render_protocol_chips(revision)
 
     sections = revision["revision_sections"]
-    section = _pick_section(
-        sections,
-        key=f"trainer_section_{revision_id}",
-    )
-    corrections = section.get("corrections") or []
-    title = section_label(section["section_key"])
+    for index, section in enumerate(sections):
+        corrections = section.get("corrections") or []
+        title = section_label(section["section_key"])
+        state = f"{len(corrections)} correction(s)" if corrections else "No corrections"
+        panel = st.expander(
+            f"{title} · {state}",
+            expanded=index == 0,
+            key=f"section_panel_{revision_id}_{section['id']}",
+            on_change="rerun",
+            icon=":material/format_list_bulleted:",
+        )
+        if not panel.open:
+            continue
+        with panel:
+            if corrections:
+                for correction_index, correction in enumerate(corrections, start=1):
+                    st.caption(f"Correction {correction_index}")
+                    _render_correction_card(
+                        repository,
+                        user_id=user_id,
+                        case_id=case["id"],
+                        correction=correction,
+                        is_draft=is_draft,
+                    )
+            else:
+                st.success(
+                    f"{title} is OK — no corrections saved yet.",
+                    icon=":material/check_circle:",
+                )
 
-    if corrections:
-        st.markdown(f"**{title}** · {len(corrections)} saved")
-        _render_correction_browser(
-            repository,
-            user_id=user_id,
-            case_id=case["id"],
-            corrections=corrections,
-            is_draft=is_draft,
-            key=f"corr_browser_{section['id']}",
-        )
-    else:
-        st.success(
-            f"{title} is OK — no corrections saved yet.",
-            icon=":material/check_circle:",
-        )
-
-    if is_draft:
-        _render_section_feedback_composer(
-            repository,
-            user_id=user_id,
-            case_id=case["id"],
-            section=section,
-        )
+            if is_draft:
+                _render_section_feedback_composer(
+                    repository,
+                    user_id=user_id,
+                    case_id=case["id"],
+                    section=section,
+                )
 
     _render_publish_action_bar(
         repository,
@@ -417,14 +436,15 @@ def _render_screenshots(
             zip(thumb_cols, visible, strict=False)
         ):
             with col:
-                st.image(data, width="stretch")
+                st.image(data, width=220)
                 try:
                     url = repository.create_signed_download_url(shot["storage_path"])
                     st.link_button(
-                        "Open",
+                        "Zoom",
                         url,
-                        width="stretch",
+                        width="content",
                         key=f"{key_prefix}_open_{shot.get('id', index)}",
+                        icon=":material/zoom_in:",
                     )
                 except Exception:
                     pass
@@ -469,45 +489,6 @@ def _correction_badge(status: str) -> None:
         st.badge("Resolved", icon=":material/check_circle:", color="green")
     else:
         st.badge("Open", icon=":material/pending:", color="orange")
-
-
-def _correction_option_label(index: int, correction: dict[str, Any]) -> str:
-    status = str(correction.get("status") or "open")
-    body = " ".join(str(correction.get("body") or "").split())
-    if len(body) > 48:
-        body = f"{body[:48]}…"
-    mark = "✓" if status == "resolved" else "•"
-    return f"{mark} #{index + 1} · {body or 'Correction'}"
-
-
-def _render_correction_browser(
-    repository: TrainingRepository,
-    *,
-    user_id: str,
-    case_id: str,
-    corrections: list[dict[str, Any]],
-    is_draft: bool,
-    key: str,
-) -> None:
-    """Show one correction at a time so the page does not jump while editing."""
-    options = list(range(len(corrections)))
-    selected = st.selectbox(
-        "Saved corrections",
-        options=options,
-        format_func=lambda index: _correction_option_label(
-            index, corrections[index]
-        ),
-        key=key,
-        label_visibility="collapsed",
-    )
-    st.caption(f"Correction {selected + 1} of {len(corrections)}")
-    _render_correction_card(
-        repository,
-        user_id=user_id,
-        case_id=case_id,
-        correction=corrections[selected],
-        is_draft=is_draft,
-    )
 
 
 def _render_correction_card(
@@ -578,15 +559,12 @@ def _render_correction_card(
             draft = comment_box(
                 key=draft_key,
                 placeholder="Paste screenshots here (Ctrl+V / Cmd+V)",
+                submit_label="Save screenshots",
             )
             disk_images = _render_optional_upload(
                 upload_key=f"shot_{correction['id']}",
             )
-            if st.button(
-                "Save screenshots",
-                key=f"attach_shot_{correction['id']}",
-                type="primary",
-            ):
+            if draft.submitted:
                 images = list(draft.images) + list(disk_images)
                 if not images:
                     st.warning("Paste or upload a screenshot first.")
@@ -649,18 +627,13 @@ def _render_section_feedback_composer(
         draft = comment_box(
             key=draft_key,
             placeholder="Notes… paste screenshots with Ctrl+V / Cmd+V",
+            submit_label="Save feedback",
         )
         disk_images = _render_optional_upload(
             upload_key=f"pending_shots_{section_id}",
         )
 
-        save = st.button(
-            "Save feedback",
-            key=f"add_feedback_{section_id}",
-            type="primary",
-            width="stretch",
-        )
-        if not save:
+        if not draft.submitted:
             return
 
         bodies = feedback_bodies(selected, draft.text)
@@ -703,31 +676,6 @@ def _render_section_feedback_composer(
         st.rerun()
 
 
-def _pick_section(
-    sections: list[dict[str, Any]],
-    *,
-    key: str,
-) -> dict[str, Any]:
-    options = [section["section_key"] for section in sections]
-
-    def _label(section_key: str) -> str:
-        section = next(row for row in sections if row["section_key"] == section_key)
-        count = len(section.get("corrections") or [])
-        name = section_label(section_key)
-        return f"{name} · {count}" if count else f"{name} · OK"
-
-    selected_key = st.pills(
-        "Section",
-        options=options,
-        format_func=_label,
-        key=key,
-        selection_mode="single",
-        default=options[0],
-        required=True,
-    )
-    return next(row for row in sections if row["section_key"] == selected_key)
-
-
 def render_trainee_revisions(
     repository: TrainingRepository,
     *,
@@ -764,36 +712,54 @@ def render_trainee_revisions(
 
     _render_protocol_chips(revision)
 
-    st.markdown("#### What to fix")
+    st.markdown("#### Feedback by section")
     if not needs:
         st.success(
             "No corrections — this package looks good.",
             icon=":material/check_circle:",
         )
-    else:
-        for section in needs:
-            corrections = section.get("corrections") or []
-            title = section_label(section["section_key"])
-            with st.expander(
-                f"{title} · {len(corrections)} item(s)",
-                expanded=len(needs) == 1,
-                icon=":material/build:",
-            ):
-                for correction in corrections:
-                    with st.container(border=True):
-                        _correction_badge(str(correction.get("status") or "open"))
-                        st.write(correction.get("body") or "")
-                        _render_screenshots(
-                            repository,
-                            correction.get("correction_screenshots") or [],
-                            key_prefix=f"trainee_corr_{correction['id']}",
-                        )
 
-    if ok:
-        st.markdown("#### Already good")
-        st.markdown(
-            " ".join(
-                f":green-badge[{section_label(section['section_key'])}]"
-                for section in ok
-            )
+    for section in revision.get("revision_sections") or []:
+        corrections = section.get("corrections") or []
+        open_items = [
+            correction
+            for correction in corrections
+            if correction.get("status") == "open"
+        ]
+        title = section_label(section["section_key"])
+        if open_items:
+            state = f"{len(open_items)} to fix"
+            icon = ":material/build:"
+        elif corrections:
+            state = "Resolved"
+            icon = ":material/check_circle:"
+        else:
+            state = "OK"
+            icon = ":material/check_circle:"
+
+        panel = st.expander(
+            f"{title} · {state}",
+            expanded=bool(open_items),
+            key=f"trainee_section_{revision_id}_{section['id']}",
+            on_change="rerun",
+            icon=icon,
         )
+        if not panel.open:
+            continue
+        with panel:
+            if not corrections:
+                st.success(
+                    "No corrections for this section.",
+                    icon=":material/check_circle:",
+                )
+                continue
+            for correction_index, correction in enumerate(corrections, start=1):
+                with st.container(border=True):
+                    st.caption(f"Correction {correction_index}")
+                    _correction_badge(str(correction.get("status") or "open"))
+                    st.write(correction.get("body") or "")
+                    _render_screenshots(
+                        repository,
+                        correction.get("correction_screenshots") or [],
+                        key_prefix=f"trainee_corr_{correction['id']}",
+                    )
