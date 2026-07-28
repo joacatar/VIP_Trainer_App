@@ -49,14 +49,15 @@ def _render_question_screenshots(
             zip(cols, visible, strict=False)
         ):
             with col:
-                st.image(data, width="stretch")
+                st.image(data, width=220)
                 try:
                     url = repository.create_signed_download_url(shot["storage_path"])
                     st.link_button(
-                        "Open",
+                        "Zoom",
                         url,
-                        width="stretch",
+                        width="content",
                         key=f"{key_prefix}_open_{shot.get('id', index)}",
+                        icon=":material/zoom_in:",
                     )
                 except Exception:
                     pass
@@ -133,14 +134,9 @@ def render_trainee_questions(
         draft = comment_box(
             key=draft_key,
             placeholder="What do you need help with? Paste screenshots with Ctrl+V",
+            submit_label="Send question",
         )
-        if st.button(
-            "Send question",
-            key=f"send_question_{case['id']}",
-            type="primary",
-            width="stretch",
-            icon=":material/send:",
-        ):
+        if draft.submitted:
             body = draft.text.strip()
             if not body and not draft.images:
                 st.warning("Write a question or paste a screenshot.")
@@ -318,18 +314,28 @@ def render_trainer_case_questions(
                     st.markdown("**Your answer**")
                     st.write(question["answer_body"])
 
-                answer = st.text_area(
-                    "Answer",
-                    value=question.get("answer_body") or "",
-                    key=f"answer_body_{question['id']}",
-                    height=100,
+                answer_key = f"answer_body_{question['id']}"
+                st.session_state.setdefault(
+                    answer_key,
+                    question.get("answer_body") or "",
                 )
-                if st.button(
-                    "Send answer",
-                    key=f"answer_q_{question['id']}",
-                    type="primary",
-                    width="content",
+                with st.form(
+                    f"answer_form_{question['id']}",
+                    border=False,
                 ):
+                    answer = st.text_area(
+                        "Answer",
+                        key=answer_key,
+                        height=120,
+                        placeholder="Write the complete answer here…",
+                    )
+                    send_answer = st.form_submit_button(
+                        "Send answer",
+                        type="primary",
+                        width="content",
+                        icon=":material/send:",
+                    )
+                if send_answer:
                     try:
                         repository.answer_question(question["id"], answer)
                     except APIError as exc:

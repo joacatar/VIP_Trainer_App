@@ -411,8 +411,13 @@ def render_trainer_case_workspace(
             st.switch_page("app_pages/trainer_cases.py")
         return
 
+    trainee = repository.get_trainee(trainee_id)
     assignments = repository.list_homework_for_cases([case_id])
     selected = enrich_cases([case], assignments, role="trainer").iloc[0].to_dict()
+    selected["trainee_name"] = (
+        trainee.get("full_name") if trainee else "Unknown trainee"
+    )
+    case["trainee_name"] = selected["trainee_name"]
 
     if selected["raw_status"] == "not_started":
         render_empty_state(

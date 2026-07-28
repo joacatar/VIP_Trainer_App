@@ -72,6 +72,9 @@ def render_case_header(
     next_action = case.get("next_step")
 
     def _body() -> None:
+        trainee_name = case.get("trainee_name")
+        if trainee_name:
+            st.caption(f"Trainee · {trainee_name}")
         st.subheader(case_title(case))
         summary, status_column = st.columns([2, 1], vertical_alignment="center")
         with summary:
