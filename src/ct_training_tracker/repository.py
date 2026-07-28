@@ -79,8 +79,18 @@ class TrainingRepository:
     def get_trainee_for_user(self, user_id: str) -> Trainee | None:
         result = (
             self._client.table("trainees")
-            .select("id, full_name, current_phase, start_date")
+            .select("id, full_name, current_phase, start_date, is_test")
             .eq("auth_user_id", user_id)
+            .maybe_single()
+            .execute()
+        )
+        return cast(Trainee | None, result.data if result is not None else None)
+
+    def get_trainee(self, trainee_id: str) -> Trainee | None:
+        result = (
+            self._client.table("trainees")
+            .select("id, full_name, current_phase, start_date, is_test")
+            .eq("id", trainee_id)
             .maybe_single()
             .execute()
         )

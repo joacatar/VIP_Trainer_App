@@ -17,6 +17,7 @@ _HTML = """
   ></textarea>
   <div id="previews" class="previews"></div>
   <div id="status" class="status"></div>
+  <button id="submit" type="button" class="submit">Save</button>
 </div>
 """
 
@@ -93,46 +94,66 @@ _CSS = """
   opacity: 0.72;
   min-height: 1.1em;
 }
+.submit {
+  width: 100%;
+  margin-top: 0.65rem;
+  border: 1px solid var(--st-primary-color, #0f766e);
+  border-radius: 0.5rem;
+  background: var(--st-primary-color, #0f766e);
+  color: white;
+  padding: 0.55rem 0.8rem;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.submit:hover {
+  filter: brightness(0.94);
+}
 """
 
 _JS = """
 export default function (component) {
-  const { parentElement, setStateValue, data } = component
+  const { parentElement, setTriggerValue, data } = component
   const editor = parentElement.querySelector("#editor")
   const previews = parentElement.querySelector("#previews")
   const status = parentElement.querySelector("#status")
-  if (!editor || !previews || !status) return
+  const submit = parentElement.querySelector("#submit")
+  if (!editor || !previews || !status || !submit) return
 
   const placeholder =
     (data && data.placeholder) ||
     "Write a comment… Paste screenshots here with Ctrl+V / Cmd+V"
   editor.placeholder = placeholder
+  submit.textContent = (data && data.submit_label) || "Save"
 
-  // Never overwrite the textarea while the user is typing — that caused
-  // incomplete text flashes and the caret jumping to the wrong place.
-  const nextText = (data && data.text) ?? ""
-  const editorFocused = document.activeElement === editor
-  if (!editorFocused && editor.value !== nextText) {
-    editor.value = nextText
+  // Keep unsaved work entirely in this browser tab. Typing never calls
+  // Streamlit, so it cannot trigger a Python rerun or a database reload.
+  const storageKey = `ct_comment_draft_${(data && data.storage_key) || "default"}`
+  const resetKey = `${storageKey}_reset`
+  const resetToken = String((data && data.reset_token) || "")
+  if (sessionStorage.getItem(resetKey) !== resetToken) {
+    sessionStorage.removeItem(storageKey)
+    sessionStorage.setItem(resetKey, resetToken)
   }
 
-  let images = Array.isArray(data && data.images) ? [...data.images] : []
+  let saved = {}
+  try {
+    saved = JSON.parse(sessionStorage.getItem(storageKey) || "{}")
+  } catch (_error) {
+    saved = {}
+  }
+  editor.value = String(saved.text || "")
+  let images = Array.isArray(saved.images) ? [...saved.images] : []
 
   const setStatus = (text) => {
     status.textContent = text || ""
   }
 
-  const emitText = () => {
-    setStateValue("text", editor.value)
-  }
-
-  const emitImages = () => {
-    setStateValue("images", images)
-  }
-
-  const emit = () => {
-    emitText()
-    emitImages()
+  const saveLocal = () => {
+    sessionStorage.setItem(
+      storageKey,
+      JSON.stringify({ text: editor.value, images })
+    )
   }
 
   const renderPreviews = () => {
@@ -152,7 +173,7 @@ export default function (component) {
         event.stopPropagation()
         images = images.filter((_, i) => i !== index)
         renderPreviews()
-        emit()
+        saveLocal()
         setStatus(images.length ? `${images.length} screenshot(s)` : "")
       }
       wrap.appendChild(img)
@@ -188,26 +209,15 @@ export default function (component) {
         },
       ]
       renderPreviews()
-      emit()
+      saveLocal()
       setStatus(`Pasted ${images.length} screenshot(s). Keep typing if needed.`)
     }
     reader.onerror = () => setStatus("Could not read pasted image.")
     reader.readAsDataURL(file)
   }
 
-  // Keep session_state nearly current for Save-without-leaving-the-field,
-  // but never remount-overwrite while focused (see nextText guard above).
-  let textTimer = null
   editor.oninput = () => {
-    clearTimeout(textTimer)
-    textTimer = setTimeout(() => {
-      emitText()
-    }, 600)
-  }
-
-  editor.onblur = () => {
-    clearTimeout(textTimer)
-    emitText()
+    saveLocal()
   }
 
   editor.onpaste = (event) => {
@@ -222,13 +232,19 @@ export default function (component) {
       addImageFile(file)
     }
     if (handledImage) {
-      clearTimeout(textTimer)
-      emitText()
       const hasText = Array.from(items).some(
         (item) => item.type === "text/plain"
       )
       if (!hasText) event.preventDefault()
     }
+  }
+
+  submit.onclick = () => {
+    saveLocal()
+    setTriggerValue("submitted", {
+      text: editor.value,
+      images,
+    })
   }
 
   renderPreviews()
@@ -237,10 +253,9 @@ export default function (component) {
   }
 
   return () => {
-    clearTimeout(textTimer)
     editor.oninput = null
-    editor.onblur = null
     editor.onpaste = null
+    submit.onclick = null
   }
 }
 """
@@ -264,6 +279,7 @@ class PastedImage:
 class CommentDraft:
     text: str
     images: list[PastedImage]
+    submitted: bool
 
 
 def decode_image_payload(payload: dict[str, Any] | None) -> PastedImage | None:
@@ -294,50 +310,41 @@ def comment_box(
     *,
     key: str,
     placeholder: str | None = None,
+    submit_label: str = "Save",
     reset_token: str = "",
 ) -> CommentDraft:
-    """Jira-like comment field: type text and paste screenshots in-place."""
-    state_key = f"{key}__draft"
-    if reset_token:
-        seen_key = f"{key}__reset"
-        if st.session_state.get(seen_key) != reset_token:
-            st.session_state[seen_key] = reset_token
-            st.session_state.pop(state_key, None)
-
-    existing = st.session_state.get(state_key) or {}
-    text = str(existing.get("text") or "")
-    raw_images = list(existing.get("images") or [])
+    """Browser-local draft that only triggers Streamlit when Save is pressed."""
+    effective_reset = f"{reset_token}:{st.session_state.get(f'{key}__reset', 0)}"
 
     result = _COMMENT_BOX(
         data={
             "placeholder": placeholder
             or "Write a comment… Paste screenshots here with Ctrl+V / Cmd+V",
-            "text": text,
-            "images": raw_images,
+            "storage_key": key,
+            "submit_label": submit_label,
+            "reset_token": effective_reset,
         },
         key=key,
-        on_text_change=lambda: None,
-        on_images_change=lambda: None,
-        height=190,
+        on_submitted_change=lambda: None,
+        height=245,
     )
 
-    next_text = str(getattr(result, "text", None) or text)
-    next_images = getattr(result, "images", None)
-    if next_images is None:
-        next_images = raw_images
-    if not isinstance(next_images, list):
-        next_images = raw_images
-
-    st.session_state[state_key] = {"text": next_text, "images": next_images}
+    payload = getattr(result, "submitted", None)
+    submitted = isinstance(payload, dict)
+    text = str(payload.get("text") or "") if submitted else ""
+    raw_images = payload.get("images") if submitted else []
+    if not isinstance(raw_images, list):
+        raw_images = []
 
     decoded: list[PastedImage] = []
-    for item in next_images:
+    for item in raw_images:
         image = decode_image_payload(item if isinstance(item, dict) else None)
         if image is not None:
             decoded.append(image)
 
-    return CommentDraft(text=next_text, images=decoded)
+    return CommentDraft(text=text, images=decoded, submitted=submitted)
 
 
 def clear_comment_draft(key: str) -> None:
-    st.session_state.pop(f"{key}__draft", None)
+    reset_key = f"{key}__reset"
+    st.session_state[reset_key] = int(st.session_state.get(reset_key, 0)) + 1
