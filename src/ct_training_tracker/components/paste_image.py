@@ -108,19 +108,31 @@ export default function (component) {
     "Write a comment… Paste screenshots here with Ctrl+V / Cmd+V"
   editor.placeholder = placeholder
 
+  // Never overwrite the textarea while the user is typing — that caused
+  // incomplete text flashes and the caret jumping to the wrong place.
   const nextText = (data && data.text) ?? ""
-  if (editor.value !== nextText) editor.value = nextText
+  const editorFocused = document.activeElement === editor
+  if (!editorFocused && editor.value !== nextText) {
+    editor.value = nextText
+  }
 
   let images = Array.isArray(data && data.images) ? [...data.images] : []
-  let textTimer = null
 
   const setStatus = (text) => {
     status.textContent = text || ""
   }
 
-  const emit = () => {
+  const emitText = () => {
     setStateValue("text", editor.value)
+  }
+
+  const emitImages = () => {
     setStateValue("images", images)
+  }
+
+  const emit = () => {
+    emitText()
+    emitImages()
   }
 
   const renderPreviews = () => {
@@ -183,16 +195,19 @@ export default function (component) {
     reader.readAsDataURL(file)
   }
 
+  // Keep session_state nearly current for Save-without-leaving-the-field,
+  // but never remount-overwrite while focused (see nextText guard above).
+  let textTimer = null
   editor.oninput = () => {
     clearTimeout(textTimer)
     textTimer = setTimeout(() => {
-      setStateValue("text", editor.value)
-    }, 200)
+      emitText()
+    }, 600)
   }
 
   editor.onblur = () => {
     clearTimeout(textTimer)
-    setStateValue("text", editor.value)
+    emitText()
   }
 
   editor.onpaste = (event) => {
@@ -208,7 +223,7 @@ export default function (component) {
     }
     if (handledImage) {
       clearTimeout(textTimer)
-      setStateValue("text", editor.value)
+      emitText()
       const hasText = Array.from(items).some(
         (item) => item.type === "text/plain"
       )

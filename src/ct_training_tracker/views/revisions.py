@@ -22,6 +22,7 @@ from ct_training_tracker.revisions import (
     partition_sections_by_feedback,
     section_label,
 )
+from ct_training_tracker.storage_cache import cached_storage_bytes
 
 KIND_ORDER = ("pdf_primary", "pdf_secondary", "ov")
 
@@ -120,6 +121,7 @@ def _render_publish_action_bar(
     revision_id: str | None,
     requirements: list[dict[str, Any]],
     is_draft: bool,
+    open_feedback: int = 0,
 ) -> None:
     """Single consolidation point: return package or approve."""
     if case["status"] not in {"in_review", "corrections_sent"}:
@@ -129,18 +131,6 @@ def _render_publish_action_bar(
         requirements,
         case_id=case["id"],
     )
-    open_feedback = 0
-    if revision_id and is_draft:
-        revision = next(
-            (
-                row
-                for row in repository.list_revisions_for_case(case["id"])
-                if row["id"] == revision_id
-            ),
-            None,
-        )
-        if revision:
-            open_feedback = count_open_corrections_in_tree(revision)
 
     with st.container(border=True):
         st.markdown("**3. Finish**")
@@ -255,6 +245,7 @@ def render_trainer_revisions(
                 revision_id=None,
                 requirements=requirements,
                 is_draft=False,
+                open_feedback=0,
             )
             return
     elif not can_start_revision(status) and draft is None and not revisions:
@@ -273,6 +264,7 @@ def render_trainer_revisions(
             revision_id=None,
             requirements=requirements,
             is_draft=False,
+            open_feedback=0,
         )
         return
 
@@ -327,14 +319,14 @@ def render_trainer_revisions(
 
     if corrections:
         st.markdown(f"**{title}** · {len(corrections)} saved")
-        for correction in corrections:
-            _render_correction_card(
-                repository,
-                user_id=user_id,
-                case_id=case["id"],
-                correction=correction,
-                is_draft=is_draft,
-            )
+        _render_correction_browser(
+            repository,
+            user_id=user_id,
+            case_id=case["id"],
+            corrections=corrections,
+            is_draft=is_draft,
+            key=f"corr_browser_{section['id']}",
+        )
     else:
         st.success(
             f"{title} is OK — no corrections saved yet.",
@@ -355,6 +347,7 @@ def render_trainer_revisions(
         revision_id=revision_id,
         requirements=requirements,
         is_draft=is_draft,
+        open_feedback=count_open_corrections_in_tree(revision) if is_draft else 0,
     )
 
 
@@ -411,7 +404,7 @@ def _render_screenshots(
     loaded: list[tuple[dict[str, Any], bytes | None, str | None]] = []
     for shot in screenshots:
         try:
-            data = repository.download_storage_bytes(shot["storage_path"])
+            data = cached_storage_bytes(repository, shot["storage_path"])
             loaded.append((shot, data, None))
         except Exception as exc:
             loaded.append((shot, None, str(exc)))
@@ -420,31 +413,27 @@ def _render_screenshots(
     if visible:
         st.caption(f"{len(visible)} screenshot(s)")
         thumb_cols = st.columns(min(4, len(visible)))
-        for col, (_shot, data) in zip(thumb_cols, visible, strict=False):
+        for index, (col, (shot, data)) in enumerate(
+            zip(thumb_cols, visible, strict=False)
+        ):
             with col:
                 st.image(data, width="stretch")
+                try:
+                    url = repository.create_signed_download_url(shot["storage_path"])
+                    st.link_button(
+                        "Open",
+                        url,
+                        width="stretch",
+                        key=f"{key_prefix}_open_{shot.get('id', index)}",
+                    )
+                except Exception:
+                    pass
 
-    for index, (shot, data, error) in enumerate(loaded):
+    for index, (shot, _data, error) in enumerate(loaded):
+        if error is None:
+            continue
         label = shot.get("original_filename") or f"Screenshot {index + 1}"
-        with st.expander(
-            f"Expand · {label}",
-            expanded=len(loaded) == 1,
-            icon=":material/zoom_in:",
-        ):
-            if data is None:
-                st.error(f"Could not load screenshot: {error}")
-                continue
-            st.image(data, width="stretch")
-            try:
-                url = repository.create_signed_download_url(shot["storage_path"])
-                st.link_button(
-                    "Open full size",
-                    url,
-                    width="stretch",
-                    key=f"{key_prefix}_open_{shot.get('id', index)}",
-                )
-            except Exception as exc:
-                st.caption(f"Open link unavailable: {exc}")
+        st.error(f"{label}: could not load — {error}")
 
 
 def _render_protocol_chips(revision: dict[str, Any]) -> None:
@@ -480,6 +469,45 @@ def _correction_badge(status: str) -> None:
         st.badge("Resolved", icon=":material/check_circle:", color="green")
     else:
         st.badge("Open", icon=":material/pending:", color="orange")
+
+
+def _correction_option_label(index: int, correction: dict[str, Any]) -> str:
+    status = str(correction.get("status") or "open")
+    body = " ".join(str(correction.get("body") or "").split())
+    if len(body) > 48:
+        body = f"{body[:48]}…"
+    mark = "✓" if status == "resolved" else "•"
+    return f"{mark} #{index + 1} · {body or 'Correction'}"
+
+
+def _render_correction_browser(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    corrections: list[dict[str, Any]],
+    is_draft: bool,
+    key: str,
+) -> None:
+    """Show one correction at a time so the page does not jump while editing."""
+    options = list(range(len(corrections)))
+    selected = st.selectbox(
+        "Saved corrections",
+        options=options,
+        format_func=lambda index: _correction_option_label(
+            index, corrections[index]
+        ),
+        key=key,
+        label_visibility="collapsed",
+    )
+    st.caption(f"Correction {selected + 1} of {len(corrections)}")
+    _render_correction_card(
+        repository,
+        user_id=user_id,
+        case_id=case_id,
+        correction=corrections[selected],
+        is_draft=is_draft,
+    )
 
 
 def _render_correction_card(
@@ -595,6 +623,7 @@ def _render_visible_checklist(
     return selected
 
 
+@st.fragment
 def _render_section_feedback_composer(
     repository: TrainingRepository,
     *,
@@ -608,6 +637,9 @@ def _render_section_feedback_composer(
 
     with st.container(border=True):
         st.markdown("**Add feedback**")
+        st.caption(
+            "Checklist clicks stay in this box — the rest of the page will not jump."
+        )
         selected = _render_visible_checklist(
             section_id=section_id,
             options=options,
@@ -744,7 +776,7 @@ def render_trainee_revisions(
             title = section_label(section["section_key"])
             with st.expander(
                 f"{title} · {len(corrections)} item(s)",
-                expanded=True,
+                expanded=len(needs) == 1,
                 icon=":material/build:",
             ):
                 for correction in corrections:

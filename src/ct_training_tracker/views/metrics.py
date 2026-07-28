@@ -14,7 +14,11 @@ from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.revisions import section_label
 
 
-def render_training_analytics(repository: TrainingRepository) -> None:
+def render_training_analytics(
+    repository: TrainingRepository,
+    *,
+    include_test: bool = False,
+) -> None:
     st.subheader("Performance & forecast")
     st.caption(
         "Derived from timestamped tracking events and published corrections — "
@@ -27,6 +31,11 @@ def render_training_analytics(repository: TrainingRepository) -> None:
     except Exception as exc:
         st.warning(f"Metrics views are not available yet: {exc}")
         return
+
+    if not include_test:
+        case_rows = [
+            row for row in case_rows if not row.get("trainee_is_test")
+        ]
 
     analytics = build_training_analytics(
         case_rows,
