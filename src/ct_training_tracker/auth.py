@@ -11,6 +11,11 @@ def clear_session(session: MutableMapping[str, Any]) -> None:
     for key in SESSION_KEYS:
         session.pop(key, None)
     session.pop("_storage_bytes_cache", None)
+    # Keep in sync with runtime.RUNTIME_CACHE_KEY (not imported here to
+    # avoid a circular import between auth.py and runtime.py).
+    session.pop("_app_runtime_cache", None)
+    for key in [k for k in session if isinstance(k, str) and k.startswith("_cache_")]:
+        session.pop(key, None)
 
 
 def create_authenticated_client(

@@ -13,6 +13,7 @@ from ct_training_tracker.components.paste_image import (
     clear_comment_draft,
     comment_box,
 )
+from ct_training_tracker.data_cache import invalidate_trainer_cache
 from ct_training_tracker.files import FILE_KIND_LABELS, READY_SLOT_STATUSES
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.revisions import (
@@ -178,6 +179,7 @@ def _render_publish_action_bar(
                 except APIError as exc:
                     st.error(exc.message)
                 else:
+                    invalidate_trainer_cache()
                     st.toast("Review published")
                     st.rerun()
         with approve_col:
@@ -211,6 +213,7 @@ def _render_publish_action_bar(
                 except APIError as exc:
                     st.error(exc.message)
                 else:
+                    invalidate_trainer_cache()
                     st.toast("Case approved")
                     st.rerun()
 

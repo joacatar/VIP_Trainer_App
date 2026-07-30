@@ -11,6 +11,12 @@ from ct_training_tracker.components.ui import (
     render_empty_state,
     render_page_header,
 )
+from ct_training_tracker.data_cache import (
+    cached_active_trainees,
+    cached_homework_for_cases,
+    cached_trainee_cases,
+    invalidate_trainer_cache,
+)
 from ct_training_tracker.metrics import summarize_progress, waiting_label
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
@@ -230,6 +236,7 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
         st.error(f"Could not create trainee: {exc.message}")
         return
 
+    invalidate_trainer_cache()
     st.success("Trainee created with 32 scheduled cases and 96 file requirements.")
     st.rerun()
 
@@ -285,16 +292,29 @@ def _assign_case(
         st.error(f"Could not assign case: {exc.message}")
         return
 
+    invalidate_trainer_cache()
     st.success(f"{case_title(case_row)} assigned.")
     st.rerun()
 
 
 def render_cases(repository: TrainingRepository, user_id: str) -> None:
     del user_id
-    render_page_header(
-        "Cases",
-        "Assign homework from the inbox. Open Review only when a package is ready.",
-    )
+    header_col, refresh_col = st.columns([5, 1], vertical_alignment="bottom")
+    with header_col:
+        render_page_header(
+            "Cases",
+            "Assign homework from the inbox. Open Review only when a "
+            "package is ready.",
+        )
+    with refresh_col:
+        if st.button(
+            "Refresh",
+            icon=":material/refresh:",
+            width="stretch",
+            help="Reload trainee and case data (auto-refreshes periodically too).",
+        ):
+            invalidate_trainer_cache()
+            st.rerun()
     include_test = st.toggle(
         "Show test trainees",
         key=SHOW_TEST_TRAINEES_KEY,
@@ -302,7 +322,7 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
     )
 
     trainees = filter_trainees(
-        [dict(row) for row in repository.list_active_trainees()],
+        cached_active_trainees(repository),
         include_test=include_test,
     )
     if not trainees:
@@ -333,8 +353,10 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
         set_query(trainee=trainee_id, case=None)
         st.rerun()
 
-    cases = repository.list_cases(trainee_id, include_files=True)
-    assignments = repository.list_homework_for_cases([row["id"] for row in cases])
+    cases = cached_trainee_cases(repository, trainee_id, include_files=True)
+    assignments = cached_homework_for_cases(
+        repository, [row["id"] for row in cases]
+    )
     frame = enrich_cases(cases, assignments, role="trainer")
 
     list_col, preview_col = st.columns([1.05, 1.2], gap="large")
