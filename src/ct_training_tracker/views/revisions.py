@@ -22,13 +22,18 @@ from ct_training_tracker.revisions import (
     feedback_bodies,
     partition_sections_by_feedback,
     section_label,
+    section_open_correction_count,
 )
 from ct_training_tracker.storage_cache import cached_storage_bytes
 
 KIND_ORDER = ("pdf_primary", "pdf_secondary", "ov")
 
 
-def _render_feedback_context(case: dict[str, Any]) -> None:
+def _render_feedback_context(
+    case: dict[str, Any],
+    *,
+    revision: dict[str, Any] | None = None,
+) -> None:
     """Repeat critical case identity inside Feedback to prevent mix-ups."""
     with st.container(border=True, horizontal=True, vertical_alignment="center"):
         with st.container():
@@ -37,6 +42,20 @@ def _render_feedback_context(case: dict[str, Any]) -> None:
         with st.container():
             st.caption("Case")
             st.markdown(f"**{case_title(case)}**")
+        with st.container():
+            st.caption("Feedback status")
+            if revision is None:
+                st.markdown("_No feedback started yet_")
+            else:
+                needs, ok = partition_sections_by_feedback(revision)
+                open_count = count_open_corrections_in_tree(revision)
+                if not needs:
+                    st.markdown(":green[All sections OK]")
+                else:
+                    st.markdown(
+                        f":orange[{len(needs)} section(s) need fixes] "
+                        f"({open_count} open) · :green[{len(ok)} OK]"
+                    )
 
 
 def _sorted_requirements(requirements: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -222,7 +241,7 @@ def render_trainer_revisions(
     case: dict[str, Any],
 ) -> None:
     st.subheader("Feedback")
-    _render_feedback_context(case)
+    _clear_section_overrides()
     status = case["status"]
     requirements = _sorted_requirements(
         repository.list_requirements_for_case(case["id"])
@@ -230,6 +249,10 @@ def render_trainer_revisions(
     revisions = repository.list_revisions_for_case(case["id"])
     draft = next((row for row in revisions if row["status"] == "draft"), None)
     can_edit_files = status in {"in_review", "corrections_sent"}
+    _render_feedback_context(
+        case,
+        revision=draft or (revisions[0] if revisions else None),
+    )
 
     if can_start_revision(status) and draft is None:
         st.caption("Start a feedback draft for anatomy sections, then publish once.")
@@ -322,43 +345,19 @@ def render_trainer_revisions(
     _render_protocol_chips(revision)
 
     sections = revision["revision_sections"]
+    any_open = count_open_corrections_in_tree(revision) > 0
     for index, section in enumerate(sections):
-        corrections = section.get("corrections") or []
-        title = section_label(section["section_key"])
-        state = f"{len(corrections)} correction(s)" if corrections else "No corrections"
-        panel = st.expander(
-            f"{title} · {state}",
-            expanded=index == 0,
-            key=f"section_panel_{revision_id}_{section['id']}",
-            on_change="rerun",
-            icon=":material/format_list_bulleted:",
+        default_expanded = (
+            section_open_correction_count(section) > 0 if any_open else index == 0
         )
-        if not panel.open:
-            continue
-        with panel:
-            if corrections:
-                for correction_index, correction in enumerate(corrections, start=1):
-                    st.caption(f"Correction {correction_index}")
-                    _render_correction_card(
-                        repository,
-                        user_id=user_id,
-                        case_id=case["id"],
-                        correction=correction,
-                        is_draft=is_draft,
-                    )
-            else:
-                st.success(
-                    f"{title} is OK — no corrections saved yet.",
-                    icon=":material/check_circle:",
-                )
-
-            if is_draft:
-                _render_section_feedback_composer(
-                    repository,
-                    user_id=user_id,
-                    case_id=case["id"],
-                    section=section,
-                )
+        _render_section_panel(
+            repository,
+            user_id=user_id,
+            case_id=case["id"],
+            section=section,
+            is_draft=is_draft,
+            default_expanded=default_expanded,
+        )
 
     _render_publish_action_bar(
         repository,
@@ -461,7 +460,7 @@ def _render_protocol_chips(revision: dict[str, Any]) -> None:
     need_labels = [
         (
             f"{section_label(section['section_key'])} "
-            f"({len(section.get('corrections') or [])})"
+            f"({section_open_correction_count(section)})"
         )
         for section in needs
     ]
@@ -491,11 +490,32 @@ def _correction_badge(status: str) -> None:
         st.badge("Open", icon=":material/pending:", color="orange")
 
 
+def _section_override_key(section_id: str) -> str:
+    return f"_section_override_{section_id}"
+
+
+def _refresh_section_override(repository: TrainingRepository, section_id: str) -> None:
+    """Patch just this section's data locally so a fragment-scoped rerun
+    shows the change instantly without reloading the rest of the page."""
+    fresh = repository.get_revision_section(section_id)
+    if fresh is not None:
+        st.session_state[_section_override_key(section_id)] = fresh
+
+
+def _clear_section_overrides() -> None:
+    """Drop stale in-fragment patches on every real full-page load, since
+    the freshly fetched revision data becomes authoritative again."""
+    prefix = "_section_override_"
+    for key in [k for k in st.session_state if k.startswith(prefix)]:
+        del st.session_state[key]
+
+
 def _render_correction_card(
     repository: TrainingRepository,
     *,
     user_id: str,
     case_id: str,
+    section_id: str,
     correction: dict[str, Any],
     is_draft: bool,
 ) -> None:
@@ -520,8 +540,9 @@ def _render_correction_card(
                         except APIError as exc:
                             st.error(exc.message)
                         else:
+                            _refresh_section_override(repository, section_id)
                             st.toast("Marked resolved")
-                            st.rerun()
+                            st.rerun(scope="fragment")
                 else:
                     if st.button(
                         "Reopen",
@@ -536,8 +557,9 @@ def _render_correction_card(
                         except APIError as exc:
                             st.error(exc.message)
                         else:
+                            _refresh_section_override(repository, section_id)
                             st.toast("Reopened")
-                            st.rerun()
+                            st.rerun(scope="fragment")
 
         st.write(correction.get("body") or "")
         if correction.get("rolled_from_correction_id"):
@@ -582,8 +604,9 @@ def _render_correction_card(
                         st.error(message)
                     else:
                         clear_comment_draft(draft_key)
+                        _refresh_section_override(repository, section_id)
                         st.toast(f"Attached {len(images)} screenshot(s)")
-                        st.rerun()
+                        st.rerun(scope="fragment")
 
 
 def _render_visible_checklist(
@@ -601,7 +624,6 @@ def _render_visible_checklist(
     return selected
 
 
-@st.fragment
 def _render_section_feedback_composer(
     repository: TrainingRepository,
     *,
@@ -672,8 +694,72 @@ def _render_section_feedback_composer(
             return
 
         clear_comment_draft(draft_key)
+        _refresh_section_override(repository, section_id)
         st.toast(f"Saved {len(created_ids)} correction(s)")
-        st.rerun()
+        st.rerun(scope="fragment")
+
+
+@st.fragment
+def _render_section_panel(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    section: dict[str, Any],
+    is_draft: bool,
+    default_expanded: bool,
+) -> None:
+    """One section's expander, corrections, and composer as a self-contained
+    unit. Saving/resolving here reruns only this fragment (scope='fragment'),
+    so the rest of the Feedback tab — and the user's scroll position — never
+    jumps back to the top of the page."""
+    section_id = section["id"]
+    section_key = section["section_key"]
+    live_section = st.session_state.get(_section_override_key(section_id), section)
+    corrections = live_section.get("corrections") or []
+    title = section_label(section_key)
+    open_count = section_open_correction_count(live_section)
+    if open_count:
+        state = f"{open_count} open"
+    elif corrections:
+        state = "Resolved"
+    else:
+        state = "No corrections"
+
+    panel = st.expander(
+        f"{title} · {state}",
+        expanded=default_expanded,
+        key=f"section_panel_{case_id}_{section_key}",
+        on_change="rerun",
+        icon=":material/format_list_bulleted:",
+    )
+    if not panel.open:
+        return
+    with panel:
+        if corrections:
+            for correction_index, correction in enumerate(corrections, start=1):
+                st.caption(f"Correction {correction_index}")
+                _render_correction_card(
+                    repository,
+                    user_id=user_id,
+                    case_id=case_id,
+                    section_id=section_id,
+                    correction=correction,
+                    is_draft=is_draft,
+                )
+        else:
+            st.success(
+                f"{title} is OK — no corrections saved yet.",
+                icon=":material/check_circle:",
+            )
+
+        if is_draft:
+            _render_section_feedback_composer(
+                repository,
+                user_id=user_id,
+                case_id=case_id,
+                section=live_section,
+            )
 
 
 def render_trainee_revisions(
@@ -740,7 +826,7 @@ def render_trainee_revisions(
         panel = st.expander(
             f"{title} · {state}",
             expanded=bool(open_items),
-            key=f"trainee_section_{revision_id}_{section['id']}",
+            key=f"trainee_section_{case['id']}_{section['section_key']}",
             on_change="rerun",
             icon=icon,
         )

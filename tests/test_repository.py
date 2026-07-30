@@ -43,6 +43,64 @@ def test_single_record_queries_handle_empty_supabase_response() -> None:
 
     assert repository.get_profile("missing-user") is None
     assert repository.get_trainee_for_user("missing-user") is None
+    assert repository.get_revision_section("missing-section") is None
+
+
+class SectionQuery:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def select(self, *_args: Any) -> "SectionQuery":
+        return self
+
+    def eq(self, *_args: Any) -> "SectionQuery":
+        return self
+
+    def maybe_single(self) -> "SectionQuery":
+        return self
+
+    def execute(self) -> SimpleNamespace:
+        return SimpleNamespace(data=self._data)
+
+
+class SectionClient:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def table(self, _name: str) -> SectionQuery:
+        return SectionQuery(self._data)
+
+
+def test_get_revision_section_sorts_corrections_and_screenshots() -> None:
+    client = SectionClient(
+        {
+            "id": "section-1",
+            "section_key": "scan",
+            "corrections": [
+                {
+                    "id": "corr-2",
+                    "created_at": "2026-01-02T00:00:00Z",
+                    "correction_screenshots": [
+                        {"id": "shot-2", "created_at": "2026-01-02T00:00:00Z"},
+                        {"id": "shot-1", "created_at": "2026-01-01T00:00:00Z"},
+                    ],
+                },
+                {
+                    "id": "corr-1",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "correction_screenshots": [],
+                },
+            ],
+        }
+    )
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    section = repository.get_revision_section("section-1")
+
+    assert section is not None
+    assert [row["id"] for row in section["corrections"]] == ["corr-1", "corr-2"]
+    shots = section["corrections"][1]["correction_screenshots"]
+    assert [row["id"] for row in shots] == ["shot-1", "shot-2"]
 
 
 def test_assign_homework_uses_transactional_rpc() -> None:

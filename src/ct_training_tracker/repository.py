@@ -482,6 +482,41 @@ class TrainingRepository:
             revision["revision_sections"] = sections
         return rows
 
+    def get_revision_section(self, section_id: str) -> dict[str, Any] | None:
+        """Refresh a single section's corrections without reloading the case."""
+        result = (
+            self._client.table("revision_sections")
+            .select(
+                "id, section_key, sort_order, notes, "
+                "corrections("
+                "id, body, severity, status, rolled_from_correction_id, "
+                "created_at, resolved_at, "
+                "correction_screenshots("
+                "id, storage_path, original_filename, mime_type, size_bytes, "
+                "created_at"
+                ")"
+                ")"
+            )
+            .eq("id", section_id)
+            .maybe_single()
+            .execute()
+        )
+        if result is None or not result.data:
+            return None
+        section = cast(dict[str, Any], result.data)
+        corrections = sorted(
+            section.get("corrections") or [],
+            key=lambda item: str(item.get("created_at") or ""),
+        )
+        for correction in corrections:
+            shots = sorted(
+                correction.get("correction_screenshots") or [],
+                key=lambda item: str(item.get("created_at") or ""),
+            )
+            correction["correction_screenshots"] = shots
+        section["corrections"] = corrections
+        return section
+
     def create_revision(self, case_id: str) -> str:
         result = self._client.rpc(
             "create_revision",
