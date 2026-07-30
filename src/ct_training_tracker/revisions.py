@@ -131,15 +131,30 @@ def feedback_bodies(
     return bodies
 
 
-def section_has_corrections(section: dict[str, Any]) -> bool:
+def section_open_correction_count(section: dict[str, Any]) -> int:
+    """Count only unresolved corrections — resolved ones no longer need work."""
     corrections = section.get("corrections") or []
-    return any(isinstance(row, dict) and row.get("body") for row in corrections)
+    return sum(
+        1
+        for row in corrections
+        if isinstance(row, dict) and row.get("body") and row.get("status") == "open"
+    )
+
+
+def section_has_corrections(section: dict[str, Any]) -> bool:
+    """Whether a section still needs work (has at least one open correction)."""
+    return section_open_correction_count(section) > 0
 
 
 def partition_sections_by_feedback(
     revision: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Return (sections_needing_corrections, sections_ok)."""
+    """Return (sections_needing_corrections, sections_ok).
+
+    "OK" includes sections with no corrections at all *and* sections whose
+    corrections have all been resolved — only open corrections count as
+    still needing work.
+    """
     needs: list[dict[str, Any]] = []
     ok: list[dict[str, Any]] = []
     for section in revision.get("revision_sections") or []:

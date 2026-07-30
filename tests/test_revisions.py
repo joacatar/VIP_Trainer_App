@@ -53,7 +53,9 @@ def test_partition_sections_empty_means_ok() -> None:
             {"section_key": "scan", "corrections": []},
             {
                 "section_key": "scapula",
-                "corrections": [{"body": "Minor movement to glenoid center"}],
+                "corrections": [
+                    {"body": "Minor movement to glenoid center", "status": "open"}
+                ],
             },
             {"section_key": "rider_form", "corrections": []},
         ]
@@ -61,6 +63,44 @@ def test_partition_sections_empty_means_ok() -> None:
     needs, ok = partition_sections_by_feedback(revision)
     assert [row["section_key"] for row in needs] == ["scapula"]
     assert [row["section_key"] for row in ok] == ["scan", "rider_form"]
+
+
+def test_partition_sections_resolved_corrections_count_as_ok() -> None:
+    from ct_training_tracker.revisions import partition_sections_by_feedback
+
+    revision = {
+        "revision_sections": [
+            {
+                "section_key": "scan",
+                "corrections": [
+                    {"body": "Fixed already", "status": "resolved"},
+                ],
+            },
+            {
+                "section_key": "scapula",
+                "corrections": [
+                    {"body": "Fixed", "status": "resolved"},
+                    {"body": "Still open", "status": "open"},
+                ],
+            },
+        ]
+    }
+    needs, ok = partition_sections_by_feedback(revision)
+    assert [row["section_key"] for row in needs] == ["scapula"]
+    assert [row["section_key"] for row in ok] == ["scan"]
+
+
+def test_section_open_correction_count() -> None:
+    from ct_training_tracker.revisions import section_open_correction_count
+
+    section = {
+        "corrections": [
+            {"body": "a", "status": "open"},
+            {"body": "b", "status": "resolved"},
+            {"body": "c", "status": "open"},
+        ]
+    }
+    assert section_open_correction_count(section) == 2
 
 
 def test_can_start_revision_only_in_review_or_corrections_sent() -> None:
