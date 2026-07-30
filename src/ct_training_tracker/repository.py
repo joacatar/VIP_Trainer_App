@@ -482,6 +482,41 @@ class TrainingRepository:
             revision["revision_sections"] = sections
         return rows
 
+    def get_revision_section(self, section_id: str) -> dict[str, Any] | None:
+        """Refresh a single section's corrections without reloading the case."""
+        result = (
+            self._client.table("revision_sections")
+            .select(
+                "id, section_key, sort_order, notes, "
+                "corrections("
+                "id, body, severity, status, rolled_from_correction_id, "
+                "created_at, resolved_at, "
+                "correction_screenshots("
+                "id, storage_path, original_filename, mime_type, size_bytes, "
+                "created_at"
+                ")"
+                ")"
+            )
+            .eq("id", section_id)
+            .maybe_single()
+            .execute()
+        )
+        if result is None or not result.data:
+            return None
+        section = cast(dict[str, Any], result.data)
+        corrections = sorted(
+            section.get("corrections") or [],
+            key=lambda item: str(item.get("created_at") or ""),
+        )
+        for correction in corrections:
+            shots = sorted(
+                correction.get("correction_screenshots") or [],
+                key=lambda item: str(item.get("created_at") or ""),
+            )
+            correction["correction_screenshots"] = shots
+        section["corrections"] = corrections
+        return section
+
     def create_revision(self, case_id: str) -> str:
         result = self._client.rpc(
             "create_revision",
@@ -603,11 +638,39 @@ class TrainingRepository:
             .select(
                 "id, case_id, section_key, body, status, asked_by, answer_body, "
                 "answered_by, answered_at, resolved_at, created_at, "
+                "trainee_viewed_at, "
                 "question_screenshots("
                 "id, storage_path, original_filename, mime_type, size_bytes, created_at"
                 ")"
             )
             .eq("case_id", case_id)
+            .order("created_at", desc=True)
+            .execute()
+        )
+        rows = cast(list[dict[str, Any]], result.data or [])
+        for row in rows:
+            shots = sorted(
+                row.get("question_screenshots") or [],
+                key=lambda item: str(item.get("created_at") or ""),
+            )
+            row["question_screenshots"] = shots
+        return rows
+
+    def list_questions_for_trainee(self, trainee_id: str) -> list[dict[str, Any]]:
+        """All of one trainee's questions across every case, for the inbox."""
+        result = (
+            self._client.table("questions")
+            .select(
+                "id, case_id, section_key, body, status, answer_body, "
+                "answered_by, answered_at, resolved_at, created_at, "
+                "trainee_viewed_at, "
+                "question_screenshots("
+                "id, storage_path, original_filename, mime_type, size_bytes, created_at"
+                "), "
+                "cases!inner(id, set_no, case_no, catalog_label, order_number, "
+                "trainee_id)"
+            )
+            .eq("cases.trainee_id", trainee_id)
             .order("created_at", desc=True)
             .execute()
         )
@@ -635,6 +698,29 @@ class TrainingRepository:
         )
         return cast(list[dict[str, Any]], result.data or [])
 
+    def list_questions_for_trainer(
+        self,
+        *,
+        status: str | None = None,
+        limit: int = 200,
+    ) -> list[dict[str, Any]]:
+        """Every question across trainees, for the trainer inbox filters."""
+        query = (
+            self._client.table("questions")
+            .select(
+                "id, case_id, section_key, body, status, answer_body, "
+                "answered_at, resolved_at, created_at, "
+                "cases(set_no, case_no, catalog_label, order_number, "
+                "trainee_id, trainees(full_name))"
+            )
+            .order("created_at", desc=True)
+            .limit(limit)
+        )
+        if status:
+            query = query.eq("status", status)
+        result = query.execute()
+        return cast(list[dict[str, Any]], result.data or [])
+
     def count_open_questions(self) -> int:
         result = (
             self._client.table("questions")
@@ -645,6 +731,22 @@ class TrainingRepository:
         if result.count is not None:
             return int(result.count)
         return len(result.data or [])
+
+    def count_unread_answers_for_trainee(
+        self,
+        trainee_id: str | None = None,
+    ) -> int:
+        result = self._client.rpc(
+            "count_unread_question_answers",
+            {"target_trainee_id": trainee_id},
+        ).execute()
+        return int(result.data or 0)
+
+    def mark_question_viewed(self, question_id: str) -> None:
+        self._client.rpc(
+            "mark_question_viewed",
+            {"target_question_id": question_id},
+        ).execute()
 
     def ask_question(
         self,

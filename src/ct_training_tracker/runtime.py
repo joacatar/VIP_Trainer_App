@@ -38,25 +38,52 @@ def render_missing_configuration() -> None:
     st.caption("Add these values to .streamlit/secrets.toml.")
 
 
+# A single script run can call create_client_or_none()/load_profile() more
+# than once (application.run() bootstraps, then each page's require_runtime()
+# bootstraps again). Cache the pair per access token in session_state so
+# every call after the first one in a session reuses it instead of hitting
+# Supabase Auth (set_session/get_user) and the profiles table again.
+RUNTIME_CACHE_KEY = "_app_runtime_cache"
+
+
 def create_client_or_none() -> Client | None:
     settings = _load_settings()
     if settings is None:
         render_missing_configuration()
         return None
+
+    access_token = st.session_state.get("access_token")
+    if access_token:
+        cached = st.session_state.get(RUNTIME_CACHE_KEY)
+        if cached is not None and cached[0] == access_token:
+            return cached[1]
+
     return create_authenticated_client(settings, st.session_state)
 
 
 def load_profile(client: Client) -> Profile | None:
+    access_token = st.session_state.get("access_token")
+    if access_token:
+        cached = st.session_state.get(RUNTIME_CACHE_KEY)
+        if cached is not None and cached[0] == access_token and cached[1] is client:
+            return cached[2]
+
     try:
         user_response = client.auth.get_user()
         user_id = user_response.user.id if user_response.user else None
         if not user_id:
             return None
-        return TrainingRepository(client).get_profile(user_id)
+        profile = TrainingRepository(client).get_profile(user_id)
     except Exception as exc:
         clear_session(st.session_state)
         st.error(f"Could not load your profile: {exc}")
         return None
+
+    if profile is not None:
+        access_token = st.session_state.get("access_token")
+        if access_token:
+            st.session_state[RUNTIME_CACHE_KEY] = (access_token, client, profile)
+    return profile
 
 
 def require_runtime() -> AppRuntime | None:

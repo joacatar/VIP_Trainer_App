@@ -43,6 +43,64 @@ def test_single_record_queries_handle_empty_supabase_response() -> None:
 
     assert repository.get_profile("missing-user") is None
     assert repository.get_trainee_for_user("missing-user") is None
+    assert repository.get_revision_section("missing-section") is None
+
+
+class SectionQuery:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def select(self, *_args: Any) -> "SectionQuery":
+        return self
+
+    def eq(self, *_args: Any) -> "SectionQuery":
+        return self
+
+    def maybe_single(self) -> "SectionQuery":
+        return self
+
+    def execute(self) -> SimpleNamespace:
+        return SimpleNamespace(data=self._data)
+
+
+class SectionClient:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def table(self, _name: str) -> SectionQuery:
+        return SectionQuery(self._data)
+
+
+def test_get_revision_section_sorts_corrections_and_screenshots() -> None:
+    client = SectionClient(
+        {
+            "id": "section-1",
+            "section_key": "scan",
+            "corrections": [
+                {
+                    "id": "corr-2",
+                    "created_at": "2026-01-02T00:00:00Z",
+                    "correction_screenshots": [
+                        {"id": "shot-2", "created_at": "2026-01-02T00:00:00Z"},
+                        {"id": "shot-1", "created_at": "2026-01-01T00:00:00Z"},
+                    ],
+                },
+                {
+                    "id": "corr-1",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "correction_screenshots": [],
+                },
+            ],
+        }
+    )
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    section = repository.get_revision_section("section-1")
+
+    assert section is not None
+    assert [row["id"] for row in section["corrections"]] == ["corr-1", "corr-2"]
+    shots = section["corrections"][1]["correction_screenshots"]
+    assert [row["id"] for row in shots] == ["shot-1", "shot-2"]
 
 
 def test_assign_homework_uses_transactional_rpc() -> None:
@@ -61,3 +119,85 @@ def test_assign_homework_uses_transactional_rpc() -> None:
     assert client.name == "assign_homework"
     assert client.params["scheduled_due"] == "2026-07-27"
     assert client.params["assigned_due"] == "2026-07-28"
+
+
+class RecordingQuery:
+    def __init__(self, data: list[dict[str, Any]]) -> None:
+        self._data = data
+        self.calls: list[tuple[str, tuple[Any, ...]]] = []
+
+    def select(self, *args: Any) -> "RecordingQuery":
+        self.calls.append(("select", args))
+        return self
+
+    def eq(self, *args: Any) -> "RecordingQuery":
+        self.calls.append(("eq", args))
+        return self
+
+    def order(self, *args: Any, **_kwargs: Any) -> "RecordingQuery":
+        self.calls.append(("order", args))
+        return self
+
+    def limit(self, *args: Any) -> "RecordingQuery":
+        self.calls.append(("limit", args))
+        return self
+
+    def execute(self) -> SimpleNamespace:
+        return SimpleNamespace(data=self._data)
+
+
+class RecordingClient:
+    def __init__(self, data: list[dict[str, Any]]) -> None:
+        self.query = RecordingQuery(data)
+
+    def table(self, _name: str) -> RecordingQuery:
+        return self.query
+
+
+def test_list_questions_for_trainee_filters_by_trainee_and_sorts_screenshots() -> None:
+    data = [
+        {
+            "id": "q1",
+            "case_id": "case-1",
+            "question_screenshots": [
+                {"id": "s2", "created_at": "2026-01-02"},
+                {"id": "s1", "created_at": "2026-01-01"},
+            ],
+        }
+    ]
+    client = RecordingClient(data)
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    rows = repository.list_questions_for_trainee("trainee-1")
+
+    assert rows[0]["id"] == "q1"
+    assert [row["id"] for row in rows[0]["question_screenshots"]] == ["s1", "s2"]
+    assert ("eq", ("cases.trainee_id", "trainee-1")) in client.query.calls
+
+
+def test_mark_question_viewed_calls_rpc_with_question_id() -> None:
+    client = RpcClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.mark_question_viewed("question-1")
+
+    assert client.name == "mark_question_viewed"
+    assert client.params == {"target_question_id": "question-1"}
+
+
+def test_count_unread_answers_for_trainee_returns_rpc_result() -> None:
+    class CountRpcClient:
+        def rpc(self, name: str, params: dict[str, Any]) -> "CountRpcClient":
+            self.name = name
+            self.params = params
+            return self
+
+        def execute(self) -> SimpleNamespace:
+            return SimpleNamespace(data=3)
+
+    client = CountRpcClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    assert repository.count_unread_answers_for_trainee("trainee-1") == 3
+    assert client.name == "count_unread_question_answers"
+    assert client.params == {"target_trainee_id": "trainee-1"}
