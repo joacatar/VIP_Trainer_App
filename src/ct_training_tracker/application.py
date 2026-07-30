@@ -94,6 +94,12 @@ def run() -> None:
                 icon=":material/open_in_new:",
                 url_path="trainee-case",
             ),
+            st.Page(
+                "app_pages/trainee_questions.py",
+                title="Questions",
+                icon=":material/help:",
+                url_path="trainee-questions",
+            ),
         ]
 
     page = st.navigation(pages, position="top")

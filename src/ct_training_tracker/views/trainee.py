@@ -36,6 +36,23 @@ def render_trainee_portal(
         )
         return
 
+    unread_answers = repository.count_unread_answers_for_trainee(trainee["id"])
+    if unread_answers:
+        with st.container(border=True):
+            left, right = st.columns([3, 1], vertical_alignment="center")
+            left.markdown(
+                f"**{unread_answers} new answer"
+                f"{'s' if unread_answers != 1 else ''} to your questions**"
+            )
+            if right.button(
+                "Open questions",
+                key="open_questions_inbox_banner",
+                type="primary",
+                width="stretch",
+                icon=":material/mark_email_unread:",
+            ):
+                st.switch_page("app_pages/trainee_questions.py")
+
     cases = repository.list_cases(trainee["id"], include_files=True)
     current_phase = trainee["current_phase"].replace("_", " ").title()
     tasks = count_tasks(cases)

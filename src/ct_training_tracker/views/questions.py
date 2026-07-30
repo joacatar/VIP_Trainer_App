@@ -7,7 +7,11 @@ from typing import Any
 import streamlit as st
 from postgrest.exceptions import APIError
 
-from ct_training_tracker.case_labels import case_catalog_label, case_order_number
+from ct_training_tracker.case_labels import (
+    case_catalog_label,
+    case_label,
+    case_order_number,
+)
 from ct_training_tracker.components.paste_image import (
     PastedImage,
     clear_comment_draft,
@@ -15,12 +19,16 @@ from ct_training_tracker.components.paste_image import (
 )
 from ct_training_tracker.questions import (
     count_open_questions,
+    count_unread_answers,
+    is_unread_answer,
     question_section_label,
     question_status_label,
     section_options,
 )
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.routing import set_query
+
+STATUS_FILTER_OPTIONS = ("all", "open", "answered", "resolved")
 
 
 def _render_question_screenshots(
@@ -170,11 +178,26 @@ def render_trainee_questions(
     st.markdown("#### Thread")
     for question in questions:
         status = str(question.get("status") or "open")
+        unread = is_unread_answer(question)
         title = (
             f"{question_section_label(question.get('section_key'))} · "
             f"{question_status_label(status)}"
         )
-        with st.expander(title, expanded=status != "resolved"):
+        panel = st.expander(
+            title,
+            expanded=unread or status != "resolved",
+            key=f"trainee_question_{question['id']}",
+            on_change="rerun",
+            icon=":material/mark_email_unread:" if unread else None,
+        )
+        if not panel.open:
+            continue
+        with panel:
+            if unread:
+                try:
+                    repository.mark_question_viewed(question["id"])
+                except Exception:
+                    pass
             _status_badge(status)
             st.write(question.get("body") or "")
             _render_question_screenshots(
@@ -217,25 +240,66 @@ def render_trainee_questions(
 
 def render_trainer_question_inbox(repository: TrainingRepository) -> None:
     st.subheader("Question inbox")
-    rows = repository.list_open_questions()
+    status_filter = st.segmented_control(
+        "Status",
+        options=STATUS_FILTER_OPTIONS,
+        format_func=lambda value: "All" if value == "all" else question_status_label(
+            value
+        ),
+        default="open",
+        key="trainer_inbox_status_filter",
+        label_visibility="collapsed",
+    )
+    if status_filter is None:
+        status_filter = "open"
+
+    rows = repository.list_questions_for_trainer(
+        status=None if status_filter == "all" else status_filter
+    )
     if not rows:
-        st.success("No open questions.", icon=":material/check_circle:")
+        st.success(
+            "No questions match this filter." if status_filter != "open"
+            else "No open questions.",
+            icon=":material/check_circle:",
+        )
         return
+
+    trainee_names = sorted(
+        {
+            (
+                (row.get("cases") or {}).get("trainees") or {}
+            ).get("full_name")
+            or "Trainee"
+            for row in rows
+            if isinstance(row.get("cases"), dict)
+        }
+    )
+    trainee_filter = st.selectbox(
+        "Trainee",
+        options=["__all__", *trainee_names],
+        format_func=lambda value: "All trainees" if value == "__all__" else value,
+        key="trainer_inbox_trainee_filter",
+    )
 
     for row in rows:
         case = row.get("cases") if isinstance(row.get("cases"), dict) else {}
         trainee = case.get("trainees") if isinstance(case.get("trainees"), dict) else {}
         trainee_name = trainee.get("full_name") or "Trainee"
+        if trainee_filter != "__all__" and trainee_name != trainee_filter:
+            continue
         label = case_catalog_label(case) if case else "?"
         order = case_order_number(case) if case else None
         case_bit = f"Case {label}" + (f" · {order}" if order else "")
         title = (
             f"{trainee_name} · {case_bit} · "
-            f"{question_section_label(row.get('section_key'))}"
+            f"{question_section_label(row.get('section_key'))} · "
+            f"{question_status_label(str(row.get('status') or 'open'))}"
         )
         with st.container(border=True):
             st.markdown(f"**{title}**")
             st.write(row.get("body") or "")
+            if row.get("answer_body"):
+                st.caption(f"Your answer: {row['answer_body']}")
             st.caption(str(row.get("created_at") or ""))
             cols = st.columns([1, 1])
             if cols[0].button(
@@ -366,3 +430,217 @@ def render_trainer_case_questions(
                     else:
                         st.toast("Reopened")
                         st.rerun()
+
+
+def _render_new_question_form(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    cases: list[dict[str, Any]],
+) -> None:
+    eligible = [row for row in cases if str(row.get("status")) != "not_started"]
+    if not eligible:
+        st.caption("Questions unlock once a case is assigned.")
+        return
+
+    case_choices = {row["id"]: case_label(row) for row in eligible}
+    case_id = st.selectbox(
+        "Case",
+        options=list(case_choices),
+        format_func=lambda value: case_choices[value],
+        key="question_inbox_new_case",
+    )
+    options = section_options()
+    section_labels = {(key or "__general__"): label for key, label in options}
+    section_keys = [key or "__general__" for key, _label in options]
+    selected_key = st.selectbox(
+        "Context",
+        options=section_keys,
+        format_func=lambda value: section_labels[value],
+        key=f"question_inbox_new_section_{case_id}",
+    )
+    section_key = None if selected_key == "__general__" else selected_key
+
+    draft_key = f"question_inbox_new_draft_{case_id}"
+    draft = comment_box(
+        key=draft_key,
+        placeholder="What do you need help with? Paste screenshots with Ctrl+V",
+        submit_label="Send question",
+    )
+    if not draft.submitted:
+        return
+
+    body = draft.text.strip()
+    if not body and not draft.images:
+        st.warning("Write a question or paste a screenshot.")
+        return
+
+    try:
+        question_id = repository.ask_question(
+            case_id=case_id,
+            body=body or "See attached screenshot(s).",
+            section_key=section_key,
+        )
+        if draft.images:
+            _upload_question_images(
+                repository,
+                user_id=user_id,
+                case_id=case_id,
+                question_id=question_id,
+                images=list(draft.images),
+            )
+    except (APIError, ValueError, Exception) as exc:
+        message = getattr(exc, "message", None) or str(exc)
+        st.error(message)
+    else:
+        clear_comment_draft(draft_key)
+        st.toast("Question sent")
+        st.rerun()
+
+
+def render_trainee_question_inbox(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    trainee: dict[str, Any],
+    cases: list[dict[str, Any]],
+) -> None:
+    """Global, filterable inbox across every case — not just one at a time."""
+    st.subheader("Questions")
+    rows = repository.list_questions_for_trainee(trainee["id"])
+    unread = count_unread_answers(rows)
+
+    metrics = st.columns(3)
+    metrics[0].metric("Unread answers", unread)
+    metrics[1].metric("Open", count_open_questions(rows))
+    metrics[2].metric("Total", len(rows))
+
+    with st.expander("Ask a new question", icon=":material/add_circle:"):
+        _render_new_question_form(repository, user_id=user_id, cases=cases)
+
+    if not rows:
+        st.caption("No questions yet — ask one above.")
+        return
+
+    case_labels = {
+        str(row["id"]): case_label(row) for row in cases
+    }
+    filters = st.columns([1.4, 1])
+    with filters[0]:
+        case_filter = st.selectbox(
+            "Case",
+            options=["__all__", *case_labels],
+            format_func=(
+                lambda value: "All cases"
+                if value == "__all__"
+                else case_labels.get(value, value)
+            ),
+            key="question_inbox_case_filter",
+        )
+    with filters[1]:
+        status_filter = st.segmented_control(
+            "Status",
+            options=STATUS_FILTER_OPTIONS,
+            format_func=lambda value: (
+                "All" if value == "all" else question_status_label(value)
+            ),
+            default="all",
+            key="question_inbox_status_filter",
+        )
+    if status_filter is None:
+        status_filter = "all"
+
+    filtered = [
+        row
+        for row in rows
+        if (case_filter == "__all__" or str(row.get("case_id")) == case_filter)
+        and (status_filter == "all" or row.get("status") == status_filter)
+    ]
+    if not filtered:
+        st.caption("No questions match these filters.")
+        return
+
+    st.markdown("#### Thread")
+    for question in filtered:
+        case = question.get("cases") if isinstance(question.get("cases"), dict) else {}
+        status = str(question.get("status") or "open")
+        unread_flag = is_unread_answer(question)
+        case_bit = case_label(case) if case else "Case"
+        title = (
+            f"{case_bit} · {question_section_label(question.get('section_key'))} · "
+            f"{question_status_label(status)}"
+        )
+        if unread_flag:
+            icon = ":material/mark_email_unread:"
+        elif status == "resolved":
+            icon = ":material/check_circle:"
+        elif status == "answered":
+            icon = ":material/mark_chat_read:"
+        else:
+            icon = ":material/help:"
+
+        panel = st.expander(
+            title,
+            expanded=unread_flag,
+            key=f"inbox_question_{question['id']}",
+            on_change="rerun",
+            icon=icon,
+        )
+        if not panel.open:
+            continue
+        with panel:
+            if unread_flag:
+                try:
+                    repository.mark_question_viewed(question["id"])
+                except Exception:
+                    pass
+            _status_badge(status)
+            st.write(question.get("body") or "")
+            _render_question_screenshots(
+                repository,
+                question.get("question_screenshots") or [],
+                key_prefix=f"inbox_q_{question['id']}",
+            )
+            if question.get("answer_body"):
+                st.markdown("**Trainer answer**")
+                st.write(question["answer_body"])
+                if question.get("answered_at"):
+                    st.caption(f"Answered {question['answered_at']}")
+
+            actions = st.columns(2)
+            if status == "answered":
+                if actions[0].button(
+                    "Mark resolved",
+                    key=f"inbox_resolve_{question['id']}",
+                    width="stretch",
+                ):
+                    try:
+                        repository.set_question_status(question["id"], "resolved")
+                    except APIError as exc:
+                        st.error(exc.message)
+                    else:
+                        st.toast("Question resolved")
+                        st.rerun()
+            elif status == "resolved":
+                if actions[0].button(
+                    "Reopen",
+                    key=f"inbox_reopen_{question['id']}",
+                    width="stretch",
+                ):
+                    try:
+                        repository.set_question_status(question["id"], "open")
+                    except APIError as exc:
+                        st.error(exc.message)
+                    else:
+                        st.toast("Question reopened")
+                        st.rerun()
+            if actions[1].button(
+                "Open case",
+                key=f"inbox_open_case_{question['id']}",
+                width="stretch",
+                icon=":material/open_in_new:",
+            ):
+                st.switch_page(
+                    "app_pages/trainee_case_workspace.py",
+                    query_params={"case": question.get("case_id")},
+                )
