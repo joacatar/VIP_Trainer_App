@@ -1,15 +1,96 @@
+import datetime as dt
+
 from ct_training_tracker.metrics import (
     FileWaitingCounts,
     ProgressTotals,
     TaskCounts,
+    case_attention_state,
     count_file_waiting,
     count_tasks,
     first_pass_sections,
     open_thread_count_by_section,
     summarize_progress,
     threads_persisting_n_revisions,
+    trainer_case_bucket,
     waiting_label,
 )
+
+TODAY = dt.date(2026, 8, 4)
+
+
+def _attention(case, revisions=(), threads=(), questions=(), today=TODAY):
+    return case_attention_state(
+        case, list(revisions), list(threads), list(questions), today
+    )
+
+
+def test_attention_unassigned_case_is_assigned_and_needs_assignment() -> None:
+    attention = _attention({"status": "not_started"})
+    assert attention.state == "assigned"
+    assert attention.needs_assignment is True
+
+
+def test_attention_no_submissions_yet_is_assigned() -> None:
+    attention = _attention({"status": "assigned"})
+    assert attention.state == "assigned"
+    assert attention.needs_assignment is False
+    assert attention.overdue is False
+
+
+def test_attention_package_in_review_needs_trainer() -> None:
+    assert _attention({"status": "in_review"}).state == "needs_trainer"
+
+
+def test_attention_revision_sent_back_is_with_trainee() -> None:
+    revisions = [{"status": "published"}]
+    attention = _attention({"status": "corrections_sent"}, revisions)
+    assert attention.state == "with_trainee"
+
+
+def test_attention_resolved_threads_but_unpublished_review_needs_trainer() -> None:
+    revisions = [{"status": "published"}, {"status": "draft"}]
+    threads = [{"status": "resolved"}, {"status": "resolved"}]
+    attention = _attention({"status": "corrections_sent"}, revisions, threads)
+    assert attention.state == "needs_trainer"
+
+
+def test_attention_open_question_sets_flag_without_changing_state() -> None:
+    questions = [{"status": "open"}, {"status": "resolved"}]
+    attention = _attention({"status": "assigned"}, questions=questions)
+    assert attention.state == "assigned"
+    assert attention.has_open_question is True
+
+
+def test_attention_overdue_and_in_review() -> None:
+    case = {"status": "in_review", "due_date": "2026-08-01"}
+    attention = _attention(case)
+    assert attention.state == "needs_trainer"
+    assert attention.overdue is True
+
+
+def test_attention_approved_never_overdue() -> None:
+    case = {"status": "approved", "due_date": "2026-08-01"}
+    attention = _attention(case)
+    assert attention.state == "approved"
+    assert attention.overdue is False
+
+
+def test_attention_new_revision_after_approval_request_needs_trainer() -> None:
+    revisions = [{"status": "published"}, {"status": "published"}]
+    attention = _attention({"status": "in_review"}, revisions)
+    assert attention.state == "needs_trainer"
+
+
+def test_attention_awaiting_resubmission_is_with_trainee() -> None:
+    assert _attention({"status": "awaiting_resubmission"}).state == "with_trainee"
+
+
+def test_trainer_case_bucket_matches_attention_states() -> None:
+    assert trainer_case_bucket("not_started") == "needs_you"
+    assert trainer_case_bucket("in_review") == "needs_you"
+    assert trainer_case_bucket("corrections_sent") == "with_other"
+    assert trainer_case_bucket("assigned") == "with_other"
+    assert trainer_case_bucket("approved") == "approved"
 
 
 def test_open_thread_count_by_section_counts_only_open_threads() -> None:

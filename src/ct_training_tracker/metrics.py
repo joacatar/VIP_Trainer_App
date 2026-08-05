@@ -1,10 +1,12 @@
 from dataclasses import dataclass
+from datetime import date
 from typing import Any, Literal
 
 from ct_training_tracker.revisions import REVIEW_SECTIONS
 
 CaseOwner = Literal["trainee", "trainer", "none"]
 AppRole = Literal["trainee", "trainer"]
+AttentionState = Literal["assigned", "with_trainee", "needs_trainer", "approved"]
 
 ACTIVE_CASE_STATUSES = {
     "assigned",
@@ -184,6 +186,82 @@ def file_slot_label(status: str) -> str:
     if status == "missing":
         return "To send"
     return str(status).replace("_", " ").title()
+
+
+@dataclass(frozen=True, slots=True)
+class CaseAttention:
+    state: AttentionState
+    overdue: bool
+    has_open_question: bool
+    needs_assignment: bool
+
+
+def case_attention_state(
+    case: dict[str, Any],
+    revisions: list[dict[str, Any]],
+    threads: list[dict[str, Any]],
+    questions: list[dict[str, Any]],
+    today: date,
+) -> CaseAttention:
+    """Single source of truth for who owns a case right now.
+
+    States: 'assigned' (scheduled/first-pass prep with the trainee),
+    'with_trainee' (sent back for rework), 'needs_trainer' (package waiting
+    for review, or a review draft is in progress), 'approved'.
+    """
+    status = str(case.get("status") or "")
+    has_draft = any(
+        str(revision.get("status") or "") == "draft" for revision in revisions
+    )
+    has_open_thread = any(
+        str(thread.get("status") or "open") == "open" for thread in threads
+    )
+
+    state: AttentionState
+    if status == "approved":
+        state = "approved"
+    elif status == "in_review" or (status == "corrections_sent" and has_draft):
+        state = "needs_trainer"
+    elif status in {"corrections_sent", "awaiting_resubmission"} or (
+        status in {"assigned", "submitted"} and has_open_thread
+    ):
+        state = "with_trainee"
+    else:  # not_started, assigned, submitted
+        state = "assigned"
+
+    overdue = False
+    due_raw = case.get("due_date")
+    if state != "approved" and due_raw:
+        try:
+            overdue = date.fromisoformat(str(due_raw)) < today
+        except ValueError:
+            pass
+
+    has_open_question = any(
+        str(question.get("status") or "") == "open" for question in questions
+    )
+    return CaseAttention(
+        state=state,
+        overdue=overdue,
+        has_open_question=has_open_question,
+        needs_assignment=status == "not_started",
+    )
+
+
+TrainerCaseBucket = Literal["needs_you", "with_other", "approved"]
+
+
+def trainer_case_bucket(status: str) -> TrainerCaseBucket:
+    """Cases-page filter bucket for one case, derived from
+    case_attention_state so filters and dashboard chips cannot disagree."""
+    attention = case_attention_state(
+        {"status": status}, [], [], [], date.today()
+    )
+    if attention.state == "needs_trainer" or attention.needs_assignment:
+        return "needs_you"
+    if attention.state == "approved":
+        return "approved"
+    return "with_other"
 
 
 def open_thread_count_by_section(

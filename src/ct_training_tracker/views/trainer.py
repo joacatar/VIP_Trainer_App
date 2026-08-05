@@ -17,7 +17,11 @@ from ct_training_tracker.data_cache import (
     cached_trainee_cases,
     invalidate_trainer_cache,
 )
-from ct_training_tracker.metrics import summarize_progress, waiting_label
+from ct_training_tracker.metrics import (
+    case_attention_state,
+    count_file_waiting,
+    waiting_label,
+)
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.routing import query_value, set_query
@@ -67,24 +71,32 @@ def render_dashboard(repository: TrainingRepository) -> None:
             )
         return
 
-    totals = summarize_progress(rows)
+    # Same source of truth as the Cases page filters: case_attention_state
+    # over each trainee's (cached) case list, so counts can never disagree.
+    counts_by_trainee = {
+        str(row["trainee_id"]): _trainee_attention_counts(
+            repository, str(row["trainee_id"])
+        )
+        for row in rows
+    }
+    need_review = sum(c["in_review"] for c in counts_by_trainee.values())
+    overdue_total = sum(c["overdue"] for c in counts_by_trainee.values())
+    to_send_total = sum(c["to_send"] for c in counts_by_trainee.values())
+    approved_total = sum(c["approved"] for c in counts_by_trainee.values())
+    cases_total = sum(c["total"] for c in counts_by_trainee.values())
     open_questions = repository.count_open_questions()
 
     question_word = "open question" if open_questions == 1 else "open questions"
     st.markdown(
-        f":blue[**{totals.waiting_on_trainer}** need review] · "
-        f":red[**{totals.overdue_cases}** overdue] · "
-        f":gray[**{totals.waiting_on_trainee}** awaiting trainee] · "
+        f":blue[**{need_review}** need review] · "
+        f":red[**{overdue_total}** overdue] · "
+        f":gray[**{to_send_total}** awaiting trainee] · "
         f":orange[**{open_questions}** {question_word}]"
     )
-    done_ratio = (
-        totals.approved_cases / totals.total_cases if totals.total_cases else 0.0
-    )
+    done_ratio = approved_total / cases_total if cases_total else 0.0
     bar_col, caption_col = st.columns([4, 1], vertical_alignment="center")
     bar_col.progress(done_ratio)
-    caption_col.caption(
-        f"{totals.approved_cases} of {totals.total_cases} approved"
-    )
+    caption_col.caption(f"{approved_total} of {cases_total} approved")
 
     attention_tab, analytics_tab = st.tabs(
         ["Needs attention", "Performance & forecast"],
@@ -93,29 +105,58 @@ def render_dashboard(repository: TrainingRepository) -> None:
     )
     if attention_tab.open:
         with attention_tab:
-            _render_attention_feed(repository, rows)
+            _render_attention_feed(repository, rows, counts_by_trainee)
     if analytics_tab.open:
         with analytics_tab:
             _render_all_trainees_table(rows)
             render_training_analytics(repository, include_test=include_test)
 
 
+def _trainee_attention_counts(
+    repository: TrainingRepository,
+    trainee_id: str,
+) -> dict[str, int]:
+    """Per-trainee actionable counts from case_attention_state."""
+    cases = cached_trainee_cases(repository, trainee_id, include_files=True)
+    today = dt.date.today()
+    in_review = 0
+    overdue = 0
+    approved = 0
+    for case in cases:
+        attention = case_attention_state(case, [], [], [], today)
+        if attention.state == "needs_trainer":
+            in_review += 1
+        if attention.overdue:
+            overdue += 1
+        if attention.state == "approved":
+            approved += 1
+    return {
+        "in_review": in_review,
+        "overdue": overdue,
+        "to_send": count_file_waiting(cases).to_send,
+        "approved": approved,
+        "total": len(cases),
+    }
+
+
 def _render_attention_feed(
     repository: TrainingRepository,
     rows: list[dict],
+    counts_by_trainee: dict[str, dict[str, int]],
 ) -> None:
     """One card per trainee with actionable chips, then the open questions."""
     for row in sorted(
         rows,
         key=lambda item: (
-            -int(item.get("waiting_on_trainer", 0)),
-            -int(item.get("overdue_cases", 0)),
-            -int(item.get("waiting_on_trainee", 0)),
+            -counts_by_trainee[str(item["trainee_id"])]["in_review"],
+            -counts_by_trainee[str(item["trainee_id"])]["overdue"],
+            -counts_by_trainee[str(item["trainee_id"])]["to_send"],
         ),
     ):
-        in_review = int(row.get("waiting_on_trainer", 0))
-        overdue = int(row.get("overdue_cases", 0))
-        to_send = int(row.get("waiting_on_trainee", 0))
+        counts = counts_by_trainee[str(row["trainee_id"])]
+        in_review = counts["in_review"]
+        overdue = counts["overdue"]
+        to_send = counts["to_send"]
         chips: list[str] = []
         if in_review:
             chips.append(f":blue-badge[{in_review} in review]")

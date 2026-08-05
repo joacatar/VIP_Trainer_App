@@ -19,6 +19,7 @@ from ct_training_tracker.metrics import (
     case_owner,
     next_step,
     owned_by_statuses,
+    trainer_case_bucket,
     waiting_on_other_statuses,
 )
 from ct_training_tracker.routing import query_value, set_query
@@ -115,6 +116,13 @@ def enrich_cases(
 
 
 def filter_priority(raw_status: str, *, role: AppRole) -> int:
+    if role == "trainer":
+        bucket = trainer_case_bucket(raw_status)
+        if bucket == "needs_you":
+            return 0
+        if bucket == "with_other":
+            return 1
+        return 3
     if raw_status in owned_by_statuses(role):
         return 0
     if raw_status in waiting_on_other_statuses(role):
@@ -134,6 +142,13 @@ def apply_case_filter(
 ) -> pd.DataFrame:
     if frame.empty:
         return frame
+    if role == "trainer" and case_filter in {"needs_you", "with_other"}:
+        # Derived from case_attention_state so these counts always agree
+        # with the dashboard chips.
+        buckets = frame["raw_status"].map(
+            lambda status: trainer_case_bucket(str(status))
+        )
+        return frame.loc[buckets == case_filter].copy()
     if case_filter == "needs_you":
         return frame.loc[
             frame["raw_status"].isin(owned_by_statuses(role))
