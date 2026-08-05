@@ -1,14 +1,35 @@
-"""Trainee progress journey — 32 case nodes across Set 1 / Set 2."""
+"""Trainee progress journey — CCv2 path matching the mockup (circles + chips)."""
 
 from __future__ import annotations
 
+from html import escape
 from typing import Any, Literal
 
 import streamlit as st
 
+from ct_training_tracker.case_labels import case_title
 from ct_training_tracker.metrics import AttentionState, case_attention_state
 
 JourneyTone = Literal["not_started", "needs_you", "with_trainer", "approved"]
+
+# Fallback when journey_category is missing from a case row (pre-migration).
+JOURNEY_CATEGORY_BY_CASE_NO: dict[int, str] = {
+    **{n: "Success Journey" for n in range(1, 5)},
+    **{n: "OV Adjusted" for n in range(5, 7)},
+    **{n: "Rejections" for n in range(7, 12)},
+    **{n: "Manual" for n in range(12, 15)},
+    15: "Duplicate",
+    16: "Axial3D Case",
+}
+
+_CHIP_DISPLAY: dict[str, str] = {
+    "Success Journey": "Success journey",
+    "OV Adjusted": "OV adjusted",
+    "Rejections": "Rejections",
+    "Manual": "Manual",
+    "Duplicate": "Duplicate",
+    "Axial3D Case": "Axial3D case",
+}
 
 _TONE_COLORS: dict[JourneyTone, str] = {
     "not_started": "#64748b",
@@ -16,6 +37,242 @@ _TONE_COLORS: dict[JourneyTone, str] = {
     "with_trainer": "#38bdf8",
     "approved": "#4ade80",
 }
+
+_WORKSPACE_PAGE = "app_pages/trainee_case_workspace.py"
+
+_HTML = """
+<div class="ct-j" id="ct-journey-root"></div>
+"""
+
+_CSS = """
+.ct-j {
+  font-family: inherit;
+  color: #e2e8f0;
+  width: 100%;
+}
+.ct-j-set {
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 0.75rem;
+  padding: 0.9rem 1rem 0.75rem;
+  margin-bottom: 0.75rem;
+  background: rgba(15, 23, 42, 0.35);
+}
+.ct-j-title {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #f8fafc;
+  margin: 0 0 0.75rem;
+}
+.ct-j-flow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem 0.3rem;
+  row-gap: 0.65rem;
+}
+.ct-j-chip {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 0.7rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(51, 65, 85, 0.55);
+  color: #cbd5e1;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  line-height: 1;
+}
+.ct-j-conn {
+  width: 14px;
+  height: 2px;
+  background: #475569;
+  border-radius: 1px;
+  flex: 0 0 14px;
+}
+.ct-j-node {
+  box-sizing: border-box;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  border-radius: 999px;
+  border: 2px solid #64748b;
+  background: transparent;
+  color: #94a3b8;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 600;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+  text-decoration: none;
+  font-family: inherit;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.ct-j-node:hover:not(:disabled) {
+  transform: scale(1.06);
+}
+.ct-j-node:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ct-j-node.tone-not_started {
+  border-color: #64748b;
+  color: #94a3b8;
+  background: transparent;
+}
+.ct-j-node.tone-needs_you {
+  border-color: #fb923c;
+  color: #fb923c;
+  background: transparent;
+}
+.ct-j-node.tone-with_trainer {
+  border-color: #38bdf8;
+  color: #7dd3fc;
+  background: rgba(56, 189, 248, 0.12);
+}
+.ct-j-node.tone-approved {
+  border-color: #4ade80;
+  color: #0f172a;
+  background: #4ade80;
+}
+.ct-j-node.is-next {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  font-size: 0.95rem;
+  box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.55);
+  animation: ct-j-pulse 1.8s ease-out infinite;
+}
+@keyframes ct-j-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(251, 146, 60, 0.55); }
+  70% { box-shadow: 0 0 0 10px rgba(251, 146, 60, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(251, 146, 60, 0); }
+}
+.ct-j-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  margin-top: 0.15rem;
+  font-size: 0.78rem;
+  color: #94a3b8;
+}
+.ct-j-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.ct-j-legend i {
+  display: inline-block;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 999px;
+  border: 2px solid;
+  box-sizing: border-box;
+}
+"""
+
+_JS = """
+export default function (component) {
+  const { data, parentElement, setTriggerValue } = component
+  const root =
+    parentElement.querySelector("#ct-journey-root") ||
+    parentElement.querySelector(".ct-j")
+  if (!root) return
+
+  const sets = Array.isArray(data?.sets) ? data.sets : []
+  const legend = Array.isArray(data?.legend) ? data.legend : []
+
+  function chipHtml(label) {
+    return `<span class="ct-j-chip">${label}</span>`
+  }
+
+  function nodeHtml(item) {
+    const classes = [
+      "ct-j-node",
+      `tone-${item.tone || "not_started"}`,
+      item.is_next ? "is-next" : "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+    const title = item.title ? ` title="${item.title}"` : ""
+    if (!item.case_id) {
+      return (
+        `<button type="button" class="${classes}" disabled` +
+        `${title}>${item.label}</button>`
+      )
+    }
+    return (
+      `<button type="button" class="${classes}" ` +
+      `data-case-id="${item.case_id}"` +
+      `${title}>${item.label}</button>`
+    )
+  }
+
+  function flowHtml(items) {
+    return items
+      .map((item) => {
+        if (item.kind === "chip") return chipHtml(item.label)
+        if (item.kind === "conn") {
+          return '<span class="ct-j-conn" aria-hidden="true"></span>'
+        }
+        return nodeHtml(item)
+      })
+      .join("")
+  }
+
+  const legendHtml = legend.length
+    ? `<div class="ct-j-legend">${legend
+        .map((row) => {
+          const style =
+            `border-color:${row.color};background:${row.fill}`
+          return (
+            `<span><i style="${style}"></i>${row.label}</span>`
+          )
+        })
+        .join("")}</div>`
+    : ""
+
+  root.innerHTML =
+    sets
+      .map(
+        (set) =>
+          `<section class="ct-j-set">` +
+          `<div class="ct-j-title">${set.title || ""}</div>` +
+          `<div class="ct-j-flow">${flowHtml(set.items || [])}</div>` +
+          `</section>`
+      )
+      .join("") + legendHtml
+
+  root.querySelectorAll("button[data-case-id]").forEach((btn) => {
+    btn.onclick = (event) => {
+      event.preventDefault()
+      const caseId = btn.getAttribute("data-case-id")
+      if (caseId) setTriggerValue("selected_case", caseId)
+    }
+  })
+}
+"""
+
+_JOURNEY = st.components.v2.component(
+    "ct_progress_journey",
+    html=_HTML,
+    css=_CSS,
+    js=_JS,
+)
+
+
+def journey_category_for_case(case: dict[str, Any]) -> str:
+    raw = case.get("journey_category")
+    if isinstance(raw, str) and raw.strip():
+        return raw.strip()
+    case_no = int(case.get("case_no") or 0)
+    return JOURNEY_CATEGORY_BY_CASE_NO.get(case_no, "Success Journey")
 
 
 def journey_tone_for_attention(state: AttentionState) -> JourneyTone:
@@ -28,22 +285,80 @@ def journey_tone_for_attention(state: AttentionState) -> JourneyTone:
     return "not_started"
 
 
-def _node_svg(number: int, tone: JourneyTone, *, filled: bool) -> str:
-    color = _TONE_COLORS[tone]
-    fill = color if filled else "transparent"
-    text = "#0f172a" if filled and tone == "approved" else "#e2e8f0"
-    return (
-        f'<span class="ct-journey-node" title="Case {number}" '
-        f'style="border-color:{color};background:{fill};color:{text}">'
-        f"{number}</span>"
-    )
+def _chip_label(category: str) -> str:
+    return _CHIP_DISPLAY.get(category, category)
 
 
-def _connector(prev_approved: bool) -> str:
-    color = _TONE_COLORS["approved"] if prev_approved else "#334155"
-    return (
-        f'<span class="ct-journey-line" style="background:{color}"></span>'
-    )
+def build_journey_items(
+    nodes: dict[int, dict[str, Any]],
+    *,
+    today,
+    threads_by_case: dict[str, list[dict[str, Any]]],
+    next_up_case_id: str | None,
+) -> list[dict[str, Any]]:
+    """Pure builder for one set's flow items (chip / conn / node)."""
+    items: list[dict[str, Any]] = []
+    previous_category: str | None = None
+    previous_was_node = False
+
+    for case_no in range(1, 17):
+        case = nodes.get(case_no)
+        category = (
+            journey_category_for_case(case)
+            if case is not None
+            else JOURNEY_CATEGORY_BY_CASE_NO.get(case_no, "Success Journey")
+        )
+        if category != previous_category:
+            items.append(
+                {
+                    "kind": "chip",
+                    "label": escape(_chip_label(category)),
+                }
+            )
+            previous_category = category
+            previous_was_node = False
+
+        if previous_was_node:
+            items.append({"kind": "conn"})
+
+        if case is None:
+            items.append(
+                {
+                    "kind": "node",
+                    "label": str(case_no),
+                    "tone": "not_started",
+                    "case_id": None,
+                    "title": "",
+                    "is_next": False,
+                }
+            )
+            previous_was_node = True
+            continue
+
+        attention = case_attention_state(
+            case,
+            [],
+            threads_by_case.get(str(case.get("id") or ""), []),
+            [],
+            today,
+        )
+        tone = journey_tone_for_attention(attention.state)
+        case_id = str(case["id"])
+        items.append(
+            {
+                "kind": "node",
+                "label": str(case_no),
+                "tone": tone,
+                "case_id": case_id,
+                "title": escape(f"Open {case_title(case)}"),
+                "is_next": bool(
+                    next_up_case_id and case_id == str(next_up_case_id)
+                ),
+            }
+        )
+        previous_was_node = True
+
+    return items
 
 
 def render_progress_journey(
@@ -51,8 +366,9 @@ def render_progress_journey(
     *,
     today,
     threads_by_case: dict[str, list[dict[str, Any]]] | None = None,
+    next_up_case_id: str | None = None,
 ) -> None:
-    """Two rows of 16 connected nodes colored by case_attention_state."""
+    """One continuous flex-wrapping path per set; chips mark category changes."""
     threads_by_case = threads_by_case or {}
     by_set: dict[int, dict[int, dict[str, Any]]] = {1: {}, 2: {}}
     for case in cases:
@@ -61,110 +377,48 @@ def render_progress_journey(
         if set_no in by_set and 1 <= case_no <= 16:
             by_set[set_no][case_no] = case
 
-    st.markdown(
-        """
-<style>
-.ct-journey-row {
-  display: flex;
-  align-items: center;
-  gap: 0;
-  margin: 0.35rem 0 0.7rem;
-  overflow-x: auto;
-  padding-bottom: 0.15rem;
-}
-.ct-journey-label {
-  width: 3.2rem;
-  flex: 0 0 3.2rem;
-  font-size: 0.78rem;
-  color: #94a3b8;
-  font-weight: 600;
-}
-.ct-journey-node {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.55rem;
-  height: 1.55rem;
-  border-radius: 999px;
-  border: 2px solid;
-  font-size: 0.62rem;
-  font-weight: 700;
-  flex: 0 0 auto;
-}
-.ct-journey-line {
-  height: 2px;
-  width: 0.55rem;
-  flex: 1 1 0.55rem;
-  min-width: 0.35rem;
-  max-width: 0.85rem;
-  opacity: 0.9;
-}
-.ct-journey-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.85rem;
-  margin-top: 0.35rem;
-  font-size: 0.78rem;
-  color: #94a3b8;
-}
-.ct-journey-legend i {
-  display: inline-block;
-  width: 0.7rem;
-  height: 0.7rem;
-  border-radius: 999px;
-  border: 2px solid;
-  margin-right: 0.3rem;
-  vertical-align: -0.1rem;
-}
-</style>
-        """,
-        unsafe_allow_html=True,
-    )
-
+    sets_payload = []
     for set_no in (1, 2):
-        parts = [
-            '<div class="ct-journey-row">'
-            f'<span class="ct-journey-label">Set {set_no}</span>'
-        ]
-        prev_approved = False
-        for case_no in range(1, 17):
-            case = by_set[set_no].get(case_no)
-            if case is None:
-                tone: JourneyTone = "not_started"
-            else:
-                attention = case_attention_state(
-                    case,
-                    [],
-                    threads_by_case.get(str(case.get("id") or ""), []),
-                    [],
-                    today,
-                )
-                tone = journey_tone_for_attention(attention.state)
-            if case_no > 1:
-                parts.append(_connector(prev_approved))
-            filled = tone == "approved"
-            parts.append(_node_svg(case_no, tone, filled=filled))
-            prev_approved = tone == "approved"
-        parts.append("</div>")
-        st.markdown("".join(parts), unsafe_allow_html=True)
+        sets_payload.append(
+            {
+                "title": escape(f"Set {set_no} · your journey"),
+                "items": build_journey_items(
+                    by_set[set_no],
+                    today=today,
+                    threads_by_case=threads_by_case,
+                    next_up_case_id=next_up_case_id,
+                ),
+            }
+        )
 
-    legend_bits: list[str] = []
+    legend = []
     for tone, label in (
         ("not_started", "Not started"),
         ("needs_you", "Needs you"),
         ("with_trainer", "With trainer"),
         ("approved", "Approved"),
     ):
-        fill = (
-            "transparent"
-            if tone != "approved"
-            else _TONE_COLORS[tone]
+        legend.append(
+            {
+                "label": label,
+                "color": _TONE_COLORS[tone],
+                "fill": (
+                    _TONE_COLORS[tone] if tone == "approved" else "transparent"
+                ),
+            }
         )
-        legend_bits.append(
-            f'<span><i style="border-color:{_TONE_COLORS[tone]};'
-            f'background:{fill}"></i>{label}</span>'
-        )
-    st.markdown(
-        f'<div class="ct-journey-legend">{"".join(legend_bits)}</div>',
-        unsafe_allow_html=True,
+
+    result = _JOURNEY(
+        data={"sets": sets_payload, "legend": legend},
+        key="trainee_progress_journey",
+        on_selected_case_change=lambda: None,
+        width="stretch",
+        height=320,
     )
+
+    selected = getattr(result, "selected_case", None)
+    if isinstance(selected, str) and selected:
+        st.switch_page(
+            _WORKSPACE_PAGE,
+            query_params={"case": selected},
+        )

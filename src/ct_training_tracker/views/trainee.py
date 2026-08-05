@@ -7,6 +7,7 @@ import datetime as dt
 import streamlit as st
 
 from ct_training_tracker.case_labels import case_title
+from ct_training_tracker.components.ask_panel import render_ask_chat_panel
 from ct_training_tracker.components.progress_journey import render_progress_journey
 from ct_training_tracker.components.ui import (
     render_empty_state,
@@ -26,11 +27,20 @@ from ct_training_tracker.views.case_board import (
 from ct_training_tracker.views.case_files import render_trainee_case_uploads
 from ct_training_tracker.views.questions import (
     render_ask_question_entry,
-    render_home_ask_question,
     render_trainee_questions,
 )
 from ct_training_tracker.views.resources import render_case_resources_readonly
 from ct_training_tracker.views.revisions import render_trainee_revisions
+
+# Shorter CTAs for the minimal dashboard (full phrases stay elsewhere).
+_SHORT_NEXT_STEP = {
+    "Prepare files and submit package": "Prepare files",
+    "Submit package for review": "Submit package for review",
+    "Replace requested files": "Replace files",
+    "Read feedback": "Read feedback",
+    "Waiting on trainer": "With trainer",
+    "Waiting for assignment": "Not assigned yet",
+}
 
 
 def _due_is_urgent(due_raw: object, today: dt.date) -> bool:
@@ -53,17 +63,24 @@ def _format_due(due_raw: object) -> str:
     return f"Due {due.strftime('%b')} {due.day}"
 
 
+def _short_step(step: object) -> str:
+    text = str(step or "Open case")
+    return _SHORT_NEXT_STEP.get(text, text)
+
+
 def _coming_up_rows(
     frame,
     *,
     primary_id: str | None,
-    limit: int = 3,
+    limit: int = 2,
 ):
+    """Only the next few cases needing the trainee — never a full inbox."""
     if frame is None or frame.empty:
         return []
     needs = apply_case_filter(frame, "needs_you", role="trainee")
-    pool = needs if not needs.empty else frame
-    ordered = sort_case_rows(pool, role="trainee")
+    if needs.empty:
+        return []
+    ordered = sort_case_rows(needs, role="trainee")
     rows = []
     for _, row in ordered.iterrows():
         if primary_id and str(row["id"]) == str(primary_id):
@@ -74,22 +91,53 @@ def _coming_up_rows(
     return rows
 
 
+def _inject_dashboard_styles() -> None:
+    st.markdown(
+        """
+<style>
+/* Breathing room between the three dashboard beats */
+div.st-key-trainee_hero {
+  margin-bottom: 1.35rem;
+}
+div.st-key-trainee_coming {
+  margin: 0.35rem 0 1.75rem;
+}
+div.st-key-trainee_coming [data-testid="stMarkdownContainer"] p {
+  margin-bottom: 0.15rem;
+  color: #cbd5e1;
+  font-size: 0.95rem;
+}
+div.st-key-trainee_corrections {
+  margin-top: 1.1rem;
+  opacity: 0.85;
+}
+div.st-key-trainee_corrections p {
+  margin: 0 !important;
+  color: #94a3b8 !important;
+  font-size: 0.85rem !important;
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_next_up_card(row: dict, *, today: dt.date, key_prefix: str) -> None:
     due_raw = row.get("due_date")
     urgent = _due_is_urgent(due_raw, today)
     due_text = _format_due(due_raw)
     title = case_title(row)
-    next_step = row.get("next_step") or row.get("status") or "Open case"
+    next_step = _short_step(row.get("next_step"))
 
-    with st.container(border=True):
-        st.caption(":blue[NEXT UP]")
-        left, right = st.columns([3.2, 1], vertical_alignment="center")
+    with st.container(border=True, key="trainee_hero"):
+        st.caption("NEXT UP")
+        left, right = st.columns([3.4, 1], vertical_alignment="center")
         with left:
-            st.markdown(f"**{title}**")
+            st.markdown(f"#### {title}")
             if urgent:
                 st.markdown(f"{next_step} · :orange[**{due_text}**]")
             else:
-                st.markdown(f"{next_step} · **{due_text}**")
+                st.markdown(f"{next_step} · {due_text}")
         with right:
             if st.button(
                 "Open",
@@ -107,17 +155,22 @@ def _render_next_up_card(row: dict, *, today: dt.date, key_prefix: str) -> None:
 def _render_coming_up(rows: list[dict], *, today: dt.date) -> None:
     if not rows:
         return
-    for row in rows:
-        due_raw = row.get("due_date")
-        due_text = _format_due(due_raw)
-        label = f"Case {row.get('catalog_label') or row.get('case_no')}"
-        step = row.get("next_step") or "—"
-        cols = st.columns([3, 1], vertical_alignment="center")
-        cols[0].markdown(f"{label} · {step}")
-        if _due_is_urgent(due_raw, today):
-            cols[1].markdown(f":orange[{due_text}]")
-        else:
-            cols[1].caption(due_text)
+    with st.container(key="trainee_coming"):
+        for row in rows:
+            due_raw = row.get("due_date")
+            due_text = _format_due(due_raw)
+            label = f"Case {row.get('catalog_label') or row.get('case_no')}"
+            step = _short_step(row.get("next_step"))
+            left, right = st.columns([4, 1], vertical_alignment="center")
+            left.markdown(f"{label} · {step}")
+            if _due_is_urgent(due_raw, today):
+                right.markdown(f":orange[{due_text}]")
+            else:
+                right.markdown(
+                    f'<p style="color:#94a3b8;text-align:right;'
+                    f'margin:0;font-size:0.9rem">{due_text}</p>',
+                    unsafe_allow_html=True,
+                )
 
 
 def _render_open_corrections_summary(
@@ -150,10 +203,15 @@ def _render_open_corrections_summary(
         )
         target_id = str(open_by_case[0][0]["id"])
 
-    with st.container(border=True):
-        left, right = st.columns([4, 1], vertical_alignment="center")
-        left.caption(message)
-        if right.button("View", key="trainee_open_corrections_view"):
+    with st.container(border=True, key="trainee_corrections"):
+        left, right = st.columns([5, 1], vertical_alignment="center")
+        left.markdown(message)
+        if right.button(
+            "View",
+            key="trainee_open_corrections_view",
+            type="secondary",
+            width="stretch",
+        ):
             st.switch_page(
                 "app_pages/trainee_case_workspace.py",
                 query_params={"case": target_id},
@@ -164,9 +222,10 @@ def render_trainee_portal(
     repository: TrainingRepository,
     profile: Profile,
 ) -> None:
+    _inject_dashboard_styles()
     today = dt.date.today()
     name = profile["full_name"] or "Trainee"
-    st.markdown(f"### Welcome, {name}")
+    st.markdown(f"## Welcome, {name}")
     st.caption("Open your next case, or check what's coming up.")
 
     trainee = repository.get_trainee_for_user(profile["id"])
@@ -179,20 +238,11 @@ def render_trainee_portal(
 
     unread_answers = repository.count_unread_answers_for_trainee(trainee["id"])
     if unread_answers:
-        with st.container(border=True):
-            left, right = st.columns([3, 1], vertical_alignment="center")
-            left.markdown(
-                f"**{unread_answers} new answer"
-                f"{'s' if unread_answers != 1 else ''} to your questions**"
-            )
-            if right.button(
-                "Open questions",
-                key="open_questions_inbox_banner",
-                type="primary",
-                width="stretch",
-                icon=":material/mark_email_unread:",
-            ):
-                st.switch_page("app_pages/trainee_questions.py")
+        st.caption(
+            f":blue[{unread_answers} new answer"
+            f"{'s' if unread_answers != 1 else ''}] — "
+            "check Questions when you have a moment."
+        )
 
     cases = repository.list_cases(trainee["id"], include_files=True)
     assignments = repository.list_homework_for_cases(
@@ -211,11 +261,10 @@ def render_trainee_portal(
         coming = _coming_up_rows(
             frame,
             primary_id=str(next_case["id"]),
-            limit=3,
+            limit=2,
         )
         _render_coming_up(coming, today=today)
 
-    st.markdown("**Your progress**")
     threads_by_case = {
         str(case["id"]): repository.list_correction_threads(str(case["id"]))
         for case in cases
@@ -224,6 +273,9 @@ def render_trainee_portal(
         cases,
         today=today,
         threads_by_case=threads_by_case,
+        next_up_case_id=(
+            str(next_case["id"]) if next_case is not None else None
+        ),
     )
 
     _render_open_corrections_summary(
@@ -231,13 +283,21 @@ def render_trainee_portal(
         threads_by_case=threads_by_case,
     )
 
-    with st.expander("Ask your trainer", icon=":material/help:"):
-        render_home_ask_question(
-            repository,
-            user_id=profile["id"],
-            cases=cases,
-            key_prefix="trainee_dashboard_ask",
+    panel_case = None
+    if next_case is not None:
+        panel_case = next(
+            (
+                case
+                for case in cases
+                if str(case["id"]) == str(next_case["id"])
+            ),
+            next_case,
         )
+    render_ask_chat_panel(
+        repository,
+        case=panel_case,
+        trainee_id=str(trainee["id"]),
+    )
 
 
 def render_trainee_case_workspace(
@@ -320,3 +380,9 @@ def render_trainee_case_workspace(
             render_trainee_questions(
                 repository, user_id=profile["id"], case=case
             )
+
+    render_ask_chat_panel(
+        repository,
+        case=case,
+        trainee_id=str(trainee["id"]),
+    )
