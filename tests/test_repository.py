@@ -201,3 +201,30 @@ def test_count_unread_answers_for_trainee_returns_rpc_result() -> None:
     assert repository.count_unread_answers_for_trainee("trainee-1") == 3
     assert client.name == "count_unread_question_answers"
     assert client.params == {"target_trainee_id": "trainee-1"}
+
+
+class OrderRecordingQuery(RecordingQuery):
+    def __init__(self, data: list[dict[str, Any]]) -> None:
+        super().__init__(data)
+        self.order_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def order(self, *args: Any, **kwargs: Any) -> "OrderRecordingQuery":
+        self.order_calls.append((args, kwargs))
+        return self
+
+
+def test_list_revisions_for_case_orders_newest_first() -> None:
+    class OrderRecordingClient:
+        def __init__(self) -> None:
+            self.query = OrderRecordingQuery([])
+
+        def table(self, _name: str) -> OrderRecordingQuery:
+            return self.query
+
+    client = OrderRecordingClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.list_revisions_for_case("case-1")
+
+    assert ("eq", ("case_id", "case-1")) in client.query.calls
+    assert client.query.order_calls == [(("revision_no",), {"desc": True})]

@@ -237,6 +237,28 @@ def _render_publish_action_bar(
                     st.rerun()
 
 
+def _sync_revision_choice(
+    widget_key: str,
+    revisions: list[dict[str, Any]],
+) -> None:
+    """Keep the revision selector honest across reruns.
+
+    Clears the stored selectbox choice when the revision list changes (a new
+    revision appeared) so the selector snaps back to the newest revision, and
+    drops stale choices that no longer match an existing revision.
+    """
+    count_key = f"{widget_key}__count"
+    valid_ids = {row["id"] for row in revisions}
+    if st.session_state.get(count_key) != len(revisions):
+        st.session_state[count_key] = len(revisions)
+        st.session_state.pop(widget_key, None)
+    elif (
+        widget_key in st.session_state
+        and st.session_state[widget_key] not in valid_ids
+    ):
+        st.session_state.pop(widget_key, None)
+
+
 def render_trainer_revisions(
     repository: TrainingRepository,
     *,
@@ -322,12 +344,14 @@ def render_trainer_revisions(
     options = list(labels)
     index = options.index(default_id) if default_id in labels else 0
 
+    widget_key = f"trainer_revision_{case['id']}"
+    _sync_revision_choice(widget_key, revisions)
     revision_id = st.selectbox(
         "Revision",
         options=options,
         index=index,
         format_func=lambda value: labels[value],
-        key=f"trainer_revision_{case['id']}",
+        key=widget_key,
         label_visibility="collapsed",
     )
     revision = next(row for row in revisions if row["id"] == revision_id)
@@ -783,11 +807,13 @@ def render_trainee_revisions(
         row["id"]: f"Revision {row['revision_no']}"
         for row in revisions
     }
+    widget_key = f"trainee_revision_{case['id']}"
+    _sync_revision_choice(widget_key, revisions)
     revision_id = st.selectbox(
         "Revision",
         options=list(labels),
         format_func=lambda value: labels[value],
-        key=f"trainee_revision_{case['id']}",
+        key=widget_key,
         label_visibility="collapsed",
     )
     revision = next(row for row in revisions if row["id"] == revision_id)
