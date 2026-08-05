@@ -42,6 +42,7 @@ from ct_training_tracker.views.questions import (
     render_trainer_case_questions,
     render_trainer_question_inbox,
 )
+from ct_training_tracker.views.resources import render_case_resources_editor
 from ct_training_tracker.views.revisions import render_trainer_revisions
 
 
@@ -428,6 +429,7 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
             return
 
         render_case_summary(selected)
+        render_case_resources_editor(repository, case_id=str(selected["id"]))
         raw = str(selected.get("raw_status") or "")
         if raw == "not_started":
             st.caption("This case still needs homework assignment.")

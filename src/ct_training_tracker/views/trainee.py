@@ -17,6 +17,7 @@ from ct_training_tracker.views.case_board import (
 )
 from ct_training_tracker.views.case_files import render_trainee_case_uploads
 from ct_training_tracker.views.questions import render_trainee_questions
+from ct_training_tracker.views.resources import render_case_resources_readonly
 from ct_training_tracker.views.revisions import render_trainee_revisions
 
 
@@ -144,6 +145,7 @@ def render_trainee_case_workspace(
         )
 
     render_case_summary(selected)
+    render_case_resources_readonly(repository, case_id=case_id)
     file_counts = count_file_waiting([case])
     files_tab, review_tab, questions_tab = st.tabs(
         [
