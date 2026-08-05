@@ -248,6 +248,7 @@ def test_create_correction_thread_uses_atomic_rpc() -> None:
         "target_section": "scan",
         "thread_body": "Fix the scan orientation.",
         "target_revision_id": "rev-1",
+        "target_related_file": None,
     }
 
 

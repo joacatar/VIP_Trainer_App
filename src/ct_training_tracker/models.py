@@ -27,6 +27,7 @@ class CorrectionThread(TypedDict):
     case_id: str
     section: str
     status: Literal["open", "resolved"]
+    related_file: Literal["pdf1", "pdf2", "ov"] | None
     created_at: str
     resolved_at: str | None
     resolved_in_revision_id: str | None

@@ -7,7 +7,6 @@ from typing import Any
 import streamlit as st
 from postgrest.exceptions import APIError
 
-from ct_training_tracker.case_labels import case_title
 from ct_training_tracker.components.paste_image import (
     PastedImage,
     clear_comment_draft,
@@ -28,36 +27,27 @@ from ct_training_tracker.storage_cache import cached_storage_bytes
 
 KIND_ORDER = ("pdf_primary", "pdf_secondary", "ov")
 
+RELATED_FILE_LABELS: dict[str, str] = {
+    "pdf1": "PDF 1",
+    "pdf2": "PDF 2",
+    "ov": "OV",
+}
+RELATED_FILE_GROUPS: tuple[tuple[str | None, str], ...] = (
+    ("pdf1", "PDF 1"),
+    ("pdf2", "PDF 2"),
+    ("ov", "OV"),
+    (None, "Not file-specific"),
+)
+
 
 def _open_threads(threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [thread for thread in threads if thread.get("status") == "open"]
 
 
-def _render_feedback_context(
-    case: dict[str, Any],
-    *,
-    threads: list[dict[str, Any]],
-) -> None:
-    """Repeat critical case identity inside Feedback to prevent mix-ups."""
-    open_count = len(_open_threads(threads))
-    resolved_count = len(threads) - open_count
-    with st.container(border=True, horizontal=True, vertical_alignment="center"):
-        with st.container():
-            st.caption("Currently reviewing")
-            st.markdown(f"**{case.get('trainee_name') or 'Trainee'}**")
-        with st.container():
-            st.caption("Case")
-            st.markdown(f"**{case_title(case)}**")
-        with st.container():
-            st.caption("Corrections")
-            if not threads:
-                st.markdown("_None raised yet_")
-            elif open_count:
-                st.markdown(
-                    f":orange[{open_count} open] · :green[{resolved_count} resolved]"
-                )
-            else:
-                st.markdown(f":green[All {resolved_count} resolved]")
+def _related_file_label(value: str | None) -> str | None:
+    if not value:
+        return None
+    return RELATED_FILE_LABELS.get(value)
 
 
 def _sorted_requirements(requirements: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -103,48 +93,63 @@ def _render_file_draft_panel(
     *,
     case_id: str,
     editable: bool,
+    open_count: int = 0,
+    resolved_count: int = 0,
 ) -> None:
-    """Silent draft flags for files — applied only on publish."""
-    reviewable = [
-        row
-        for row in requirements
-        if row["status"] in READY_SLOT_STATUSES | {"replacement_requested"}
-        or row["status"] == "accepted"
-    ]
-    if not reviewable:
+    """Compact horizontal file strip — open links + optional replace flag."""
+    rows = _sorted_requirements(requirements)
+    if not rows:
         return
 
-    st.markdown("#### 1. Package files")
-    st.caption(
-        "Mark files that need replacement. Nothing is sent until you publish."
-    )
-    for requirement in reviewable:
-        label = FILE_KIND_LABELS[requirement["kind"]]
-        req_id = str(requirement["id"])
-        url = requirement.get("external_url") or ""
-        with st.container(border=True):
-            head = st.columns([2, 1], vertical_alignment="center")
-            head[0].markdown(f"**{label}**")
-            if requirement["status"] == "accepted":
-                head[1].badge("Accepted", color="green")
-            elif requirement["status"] == "replacement_requested":
-                head[1].badge("Replace pending", color="orange")
-            else:
-                head[1].badge("In review", color="blue")
-            if url:
-                st.link_button("Open link", url, width="content")
-            if not editable or requirement["status"] == "accepted":
-                continue
-            needs = st.checkbox(
-                "Needs replacement",
-                key=f"draft_replace_{case_id}_{req_id}",
+    pills, summary = st.columns([3, 1], vertical_alignment="center")
+    with pills:
+        cols = st.columns(max(len(rows), 1))
+        for col, requirement in zip(cols, rows, strict=False):
+            with col:
+                label = FILE_KIND_LABELS.get(requirement["kind"], requirement["kind"])
+                url = requirement.get("external_url") or ""
+                req_id = str(requirement["id"])
+                flag_key = f"draft_replace_{case_id}_{req_id}"
+                if (
+                    flag_key not in st.session_state
+                    and requirement["status"] == "replacement_requested"
+                ):
+                    st.session_state[flag_key] = True
+                flagged = bool(st.session_state.get(flag_key, False))
+                if url:
+                    st.link_button(
+                        f":material/description: {label}",
+                        url,
+                        width="stretch",
+                        type="secondary",
+                    )
+                else:
+                    st.caption(f":material/description: {label}")
+                if editable and requirement["status"] != "accepted":
+                    st.toggle(
+                        "Needs replacement",
+                        key=flag_key,
+                        help="Flag this file for replacement on publish",
+                    )
+                    if flagged:
+                        st.text_input(
+                            "Why",
+                            key=f"draft_replace_note_{case_id}_{req_id}",
+                            placeholder="Optional note",
+                            label_visibility="collapsed",
+                        )
+                elif flagged:
+                    st.caption(":orange[Replace pending]")
+    with summary:
+        if open_count:
+            st.markdown(
+                f":orange[**{open_count}** open] · "
+                f":green[**{resolved_count}** resolved]"
             )
-            if needs:
-                st.text_input(
-                    "Why this file needs to be resent",
-                    key=f"draft_replace_note_{case_id}_{req_id}",
-                    placeholder="Optional note for the trainee",
-                )
+        elif resolved_count:
+            st.markdown(f":green[**{resolved_count}** resolved]")
+        else:
+            st.caption("No corrections yet")
 
 
 def _render_publish_action_bar(
@@ -278,7 +283,6 @@ def render_trainer_revisions(
     user_id: str,
     case: dict[str, Any],
 ) -> None:
-    st.subheader("Feedback")
     _clear_section_overrides()
     status = case["status"]
     requirements = _sorted_requirements(
@@ -287,9 +291,18 @@ def render_trainer_revisions(
     revisions = repository.list_revisions_for_case(case["id"])
     threads = repository.list_correction_threads(case["id"])
     open_thread_count = len(_open_threads(threads))
+    resolved_count = len(threads) - open_thread_count
     draft = next((row for row in revisions if row["status"] == "draft"), None)
     can_edit_files = status in {"in_review", "corrections_sent"}
-    _render_feedback_context(case, threads=threads)
+
+    def _files(*, editable: bool) -> None:
+        _render_file_draft_panel(
+            requirements,
+            case_id=case["id"],
+            editable=editable,
+            open_count=open_thread_count,
+            resolved_count=resolved_count,
+        )
 
     if can_start_revision(status) and draft is None:
         st.caption("Start a feedback draft for anatomy sections, then publish once.")
@@ -307,11 +320,7 @@ def render_trainer_revisions(
                 st.toast("Draft review started")
                 st.rerun()
         if not revisions:
-            _render_file_draft_panel(
-                requirements,
-                case_id=case["id"],
-                editable=can_edit_files,
-            )
+            _files(editable=can_edit_files)
             _render_publish_action_bar(
                 repository,
                 case=case,
@@ -326,11 +335,7 @@ def render_trainer_revisions(
         return
 
     if not revisions:
-        _render_file_draft_panel(
-            requirements,
-            case_id=case["id"],
-            editable=can_edit_files,
-        )
+        _files(editable=can_edit_files)
         _render_publish_action_bar(
             repository,
             case=case,
@@ -364,31 +369,19 @@ def render_trainer_revisions(
     if not is_draft:
         st.badge("Published", icon=":material/lock:", color="blue")
 
-    _render_file_draft_panel(
-        requirements,
-        case_id=case["id"],
-        editable=is_draft or can_edit_files,
-    )
-
-    st.markdown("#### 2. Section feedback")
-    st.caption(
-        "One card per correction. Resolve a card when the trainee fixes it."
-    )
-    _render_thread_chips(threads)
+    _files(editable=is_draft or can_edit_files)
 
     revision_no_by_id = {row["id"]: row["revision_no"] for row in revisions}
     can_act = is_draft or can_edit_files
-    for section_key, _label, _order in REVIEW_SECTIONS:
-        _render_section_thread_panel(
-            repository,
-            user_id=user_id,
-            case_id=case["id"],
-            section_key=section_key,
-            threads=[t for t in threads if t.get("section") == section_key],
-            can_act=can_act,
-            revision_id=revision_id,
-            revision_no_by_id=revision_no_by_id,
-        )
+    _render_corrections_workspace(
+        repository,
+        user_id=user_id,
+        case_id=case["id"],
+        threads=threads,
+        can_act=can_act,
+        revision_id=revision_id,
+        revision_no_by_id=revision_no_by_id,
+    )
 
     _render_publish_action_bar(
         repository,
@@ -529,9 +522,9 @@ def _section_override_key(case_id: str, section_key: str) -> str:
 
 
 def _refresh_thread_overrides(repository: TrainingRepository, case_id: str) -> None:
-    """Patch every section's thread list locally so a fragment-scoped rerun
-    shows the change instantly without reloading the rest of the page."""
+    """Patch thread lists locally so a fragment-scoped rerun shows changes."""
     fresh = repository.list_correction_threads(case_id)
+    st.session_state[f"_threads_override_{case_id}"] = fresh
     for section_key, _label, _order in REVIEW_SECTIONS:
         st.session_state[_section_override_key(case_id, section_key)] = [
             thread for thread in fresh if thread.get("section") == section_key
@@ -539,10 +532,9 @@ def _refresh_thread_overrides(repository: TrainingRepository, case_id: str) -> N
 
 
 def _clear_section_overrides() -> None:
-    """Drop stale in-fragment patches on every real full-page load, since
-    the freshly fetched thread data becomes authoritative again."""
-    prefix = "_section_override_"
-    for key in [k for k in st.session_state if k.startswith(prefix)]:
+    """Drop stale in-fragment patches on every real full-page load."""
+    prefixes = ("_section_override_", "_threads_override_")
+    for key in [k for k in st.session_state if k.startswith(prefixes)]:
         del st.session_state[key]
 
 
@@ -597,6 +589,7 @@ def _render_thread_card(
     can_act: bool,
     revision_id: str | None,
     revision_no_by_id: dict[str, int],
+    show_section_in_caption: bool = True,
 ) -> None:
     status = str(thread.get("status") or "open")
     events = thread.get("correction_events") or []
@@ -609,11 +602,24 @@ def _render_thread_card(
         thread,
         revision_no_by_id=revision_no_by_id,
     )
+    file_label = _related_file_label(thread.get("related_file"))
+    if show_section_in_caption:
+        section_bit = section_label(str(thread.get("section") or ""))
+        caption = f"{section_bit} · {caption}" if caption else section_bit
 
     with st.container(border=True):
-        head = st.columns([1.4, 1], vertical_alignment="center")
+        head = st.columns([2, 1], vertical_alignment="center")
         with head[0]:
-            _thread_status_badge(status)
+            badges = st.columns([1, 1], vertical_alignment="center")
+            with badges[0]:
+                _thread_status_badge(status)
+            with badges[1]:
+                if file_label:
+                    st.badge(
+                        file_label,
+                        icon=":material/description:",
+                        color="gray",
+                    )
             if persisted >= 2:
                 st.caption(f":material/sync: Persisted {persisted} revisions")
         with head[1]:
@@ -727,6 +733,17 @@ def _render_section_composer(
         checklist_key=composer_key,
         options=options,
     )
+    file_options = ["__none__", "pdf1", "pdf2", "ov"]
+    related = st.segmented_control(
+        "File",
+        options=file_options,
+        format_func=lambda value: (
+            "Not file-specific" if value == "__none__" else RELATED_FILE_LABELS[value]
+        ),
+        default="__none__",
+        key=f"related_file_{composer_key}",
+        label_visibility="collapsed",
+    )
     st.markdown("**Comment + screenshots**")
     draft_key = f"section_comment_{composer_key}"
     draft = comment_box(
@@ -749,6 +766,7 @@ def _render_section_composer(
     if not bodies and shots:
         bodies = ["See attached screenshot(s)."]
 
+    related_file = None if not related or related == "__none__" else related
     created_ids: list[str] = []
     try:
         for body in bodies:
@@ -757,6 +775,7 @@ def _render_section_composer(
                 section=section_key,
                 body=body,
                 revision_id=revision_id,
+                related_file=related_file,
             )
             created_ids.append(thread_id)
         if shots and created_ids:
@@ -782,6 +801,103 @@ def _render_section_composer(
     st.toast(f"Saved {len(created_ids)} correction(s)")
     st.rerun(scope="fragment")
 
+
+def _render_corrections_workspace(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    threads: list[dict[str, Any]],
+    can_act: bool,
+    revision_id: str | None,
+    revision_no_by_id: dict[str, int],
+) -> None:
+    """By-section / by-file toggle over the same open-thread list."""
+    override = st.session_state.get(f"_threads_override_{case_id}")
+    live_threads = override if override is not None else threads
+
+    toggle_col, add_col = st.columns([3, 1], vertical_alignment="center")
+    with toggle_col:
+        view = st.segmented_control(
+            "Group corrections",
+            options=["section", "file"],
+            format_func=lambda value: (
+                "By section" if value == "section" else "By file"
+            ),
+            default="section",
+            key=f"corr_view_{case_id}",
+            label_visibility="collapsed",
+        )
+    with add_col:
+        pass  # Add lives inside each group expander below
+
+    if view is None:
+        view = "section"
+
+    open_threads = _open_threads(live_threads)
+    resolved = [
+        thread for thread in live_threads if thread.get("status") != "open"
+    ]
+
+    if view == "file":
+        groups: list[tuple[str, list[dict[str, Any]]]] = []
+        for file_key, label in RELATED_FILE_GROUPS:
+            group = [
+                thread
+                for thread in open_threads
+                if (thread.get("related_file") or None) == file_key
+            ]
+            if group or file_key is not None:
+                groups.append((label, group))
+        for label, group in groups:
+            open_n = len(group)
+            with st.container(border=True):
+                head = st.columns([2, 1], vertical_alignment="center")
+                head[0].markdown(f"**{label}**")
+                with head[1]:
+                    if open_n:
+                        st.badge(f"{open_n} open", color="orange")
+                    else:
+                        st.caption("No open corrections")
+                for thread in group:
+                    _render_thread_card(
+                        repository,
+                        user_id=user_id,
+                        case_id=case_id,
+                        thread=thread,
+                        can_act=can_act,
+                        revision_id=revision_id,
+                        revision_no_by_id=revision_no_by_id,
+                        show_section_in_caption=True,
+                    )
+    else:
+        for section_key, _label, _order in REVIEW_SECTIONS:
+            _render_section_thread_panel(
+                repository,
+                user_id=user_id,
+                case_id=case_id,
+                section_key=section_key,
+                threads=[
+                    t for t in live_threads if t.get("section") == section_key
+                ],
+                can_act=can_act,
+                revision_id=revision_id,
+                revision_no_by_id=revision_no_by_id,
+            )
+
+    if resolved and view == "file":
+        with st.expander(f"{len(resolved)} resolved"):
+            for thread in resolved:
+                _render_thread_card(
+                    repository,
+                    user_id=user_id,
+                    case_id=case_id,
+                    thread=thread,
+                    can_act=can_act,
+                    revision_id=revision_id,
+                    revision_no_by_id=revision_no_by_id,
+                    show_section_in_caption=True,
+                )
 
 @st.fragment
 def _render_section_thread_panel(

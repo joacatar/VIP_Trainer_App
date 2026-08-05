@@ -8,6 +8,7 @@ from ct_training_tracker.case_labels import case_title
 from ct_training_tracker.components.ui import (
     constrained_width,
     render_case_header,
+    render_compact_review_header,
     render_empty_state,
     render_page_header,
 )
@@ -551,20 +552,21 @@ def render_trainer_case_workspace(
             )
         return
 
-    back, heading = st.columns([1, 5], vertical_alignment="center")
+    back, heading = st.columns([1, 8], vertical_alignment="center")
     with back:
-        if st.button("Back", icon=":material/arrow_back:"):
+        if st.button(
+            "",
+            icon=":material/arrow_back:",
+            key=f"review_back_{case_id}",
+            help="Back to Cases",
+        ):
             st.switch_page(
                 "app_pages/trainer_cases.py",
                 query_params={"trainee": trainee_id, "case": case_id},
             )
     with heading:
-        render_page_header(
-            "Review",
-            "Inspect files, leave corrections, answer questions, then publish.",
-        )
+        render_compact_review_header(selected)
 
-    render_case_summary(selected)
     files_tab, review_tab, questions_tab = st.tabs(
         [
             ":material/folder: Files",
@@ -573,6 +575,7 @@ def render_trainer_case_workspace(
         ],
         key=f"trainer_review_tabs_{case_id}",
         on_change="rerun",
+        default=":material/rate_review: Feedback",
     )
     if files_tab.open:
         with files_tab:

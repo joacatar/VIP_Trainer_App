@@ -566,8 +566,8 @@ class TrainingRepository:
         query = (
             self._client.table("corrections_threads")
             .select(
-                "id, case_id, section, status, created_at, resolved_at, "
-                "resolved_in_revision_id, "
+                "id, case_id, section, status, related_file, created_at, "
+                "resolved_at, resolved_in_revision_id, "
                 "correction_events(id, revision_id, event_type, body, created_at), "
                 "correction_thread_screenshots("
                 "id, storage_path, original_filename, mime_type, size_bytes, "
@@ -599,6 +599,7 @@ class TrainingRepository:
         section: str,
         body: str,
         revision_id: str | None,
+        related_file: str | None = None,
     ) -> str:
         """Create the thread and its first 'raised' event in one operation."""
         result = self._client.rpc(
@@ -608,6 +609,7 @@ class TrainingRepository:
                 "target_section": section,
                 "thread_body": body,
                 "target_revision_id": revision_id,
+                "target_related_file": related_file,
             },
         ).execute()
         return cast(str, result.data)
