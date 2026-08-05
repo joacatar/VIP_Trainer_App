@@ -18,6 +18,11 @@ from ct_training_tracker.metrics import (
 )
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.trainee_filters import trainee_display_name
+from ct_training_tracker.views.bulk_due_dates import (
+    is_select_mode,
+    selected_case_ids,
+    toggle_case_selected,
+)
 
 
 def _open_questions_by_case(
@@ -108,6 +113,15 @@ def _render_lane(
 
 def _render_card(card: BoardCard, *, dimmed: bool) -> None:
     with st.container(border=True):
+        if is_select_mode():
+            checked = st.checkbox(
+                "Select",
+                value=card.case_id in selected_case_ids(),
+                key=f"board_select_{card.case_id}",
+                label_visibility="collapsed",
+            )
+            toggle_case_selected(card.case_id, selected=checked)
+
         title_row = st.columns([3, 1], vertical_alignment="center")
         with title_row[0]:
             if dimmed:
@@ -129,6 +143,9 @@ def _render_card(card: BoardCard, *, dimmed: bool) -> None:
                 st.caption(f":material/sync: {card.footer}")
             else:
                 st.caption(f":material/calendar_today: {card.footer}")
+
+        if is_select_mode():
+            return
 
         if st.button(
             "Open",

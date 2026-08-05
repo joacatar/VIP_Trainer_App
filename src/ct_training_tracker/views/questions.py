@@ -104,6 +104,211 @@ def _upload_question_images(
         )
 
 
+def _case_topic_options() -> list[tuple[str | None, str]]:
+    """Topics inside a case: general-to-the-case, then each review section."""
+    return [
+        (None, "General (this case)"),
+        *[
+            (key, label)
+            for key, label in section_options()
+            if key is not None
+        ],
+    ]
+
+
+def _anchor_case_for_general(cases: list[dict[str, Any]]) -> dict[str, Any]:
+    """Pick a case to hang a free-form general question on (schema needs case_id)."""
+    preferred = [
+        row
+        for row in cases
+        if str(row.get("status") or "") not in {"approved", "not_started"}
+    ]
+    return preferred[0] if preferred else cases[0]
+
+
+def render_home_ask_question(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    cases: list[dict[str, Any]],
+    key_prefix: str = "trainee_home_ask",
+) -> None:
+    """Ask box: General, or About a case → topic (general-in-case / Scan / …)."""
+    eligible = [row for row in cases if str(row.get("status")) != "not_started"]
+    if not eligible:
+        with st.container(border=True):
+            st.markdown("**Ask your trainer**")
+            st.caption(
+                "Questions unlock once your first case is assigned."
+            )
+        return
+
+    case_by_id = {str(row["id"]): row for row in eligible}
+    with st.container(border=True):
+        st.markdown(":material/help: **Ask your trainer**")
+        st.caption("Your trainer sees every question in their inbox.")
+
+        kind = st.segmented_control(
+            "Question type",
+            options=["general", "case"],
+            format_func=lambda value: (
+                "General" if value == "general" else "About a case"
+            ),
+            default="general",
+            key=f"{key_prefix}_kind",
+        )
+        if kind is None:
+            kind = "general"
+
+        case: dict[str, Any]
+        section_key: str | None = None
+
+        if kind == "general":
+            case = _anchor_case_for_general(eligible)
+            st.caption(
+                "General training question — not about a specific case part."
+            )
+        else:
+            case_id = st.selectbox(
+                "Which case?",
+                options=list(case_by_id),
+                format_func=lambda value: case_label(case_by_id[value]),
+                key=f"{key_prefix}_case",
+            )
+            case = case_by_id[str(case_id)]
+
+            topics = _case_topic_options()
+            topic_keys = [
+                key if key is not None else "__general__" for key, _ in topics
+            ]
+            labels = {
+                (key if key is not None else "__general__"): label
+                for key, label in topics
+            }
+            selected = st.selectbox(
+                "Topic",
+                options=topic_keys,
+                format_func=lambda value: labels[value],
+                key=f"{key_prefix}_topic",
+            )
+            section_key = None if selected == "__general__" else selected
+
+        draft_key = f"{key_prefix}_draft"
+        draft = comment_box(
+            key=draft_key,
+            placeholder=(
+                "What do you need help with? Paste screenshots with Ctrl+V / Cmd+V"
+            ),
+            submit_label="Send question",
+        )
+        if not draft.submitted:
+            return
+
+        body = draft.text.strip()
+        if not body and not draft.images:
+            st.warning("Write a question or paste a screenshot.")
+            return
+
+        try:
+            question_id = repository.ask_question(
+                case_id=str(case["id"]),
+                body=body or "See attached screenshot(s).",
+                section_key=section_key,
+            )
+            if draft.images:
+                _upload_question_images(
+                    repository,
+                    user_id=user_id,
+                    case_id=str(case["id"]),
+                    question_id=question_id,
+                    images=list(draft.images),
+                )
+        except (APIError, ValueError, Exception) as exc:
+            message = getattr(exc, "message", None) or str(exc)
+            st.error(message)
+            return
+
+        clear_comment_draft(draft_key)
+        st.toast("Question sent to your trainer")
+        st.rerun()
+
+
+def render_ask_question_entry(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case: dict[str, Any],
+    key_prefix: str,
+    default_scope: str = "general",
+) -> None:
+    """Ask box on a case page — topic is general-in-case or a review section."""
+    del default_scope
+    if case.get("status") == "not_started":
+        st.caption("Questions unlock after this case is assigned.")
+        return
+
+    with st.container(border=True):
+        st.markdown("**Ask a question**")
+        st.caption(
+            f"About {case_label(case)} — pick a topic, then send to your trainer."
+        )
+
+        topics = _case_topic_options()
+        topic_keys = [
+            key if key is not None else "__general__" for key, _ in topics
+        ]
+        labels = {
+            (key if key is not None else "__general__"): label
+            for key, label in topics
+        }
+        selected = st.selectbox(
+            "Topic",
+            options=topic_keys,
+            format_func=lambda value: labels[value],
+            key=f"{key_prefix}_topic_{case['id']}",
+        )
+        section_key = None if selected == "__general__" else selected
+
+        draft_key = f"{key_prefix}_ask_{case['id']}"
+        draft = comment_box(
+            key=draft_key,
+            placeholder=(
+                "What do you need help with? Paste screenshots with Ctrl+V / Cmd+V"
+            ),
+            submit_label="Send question",
+        )
+        if not draft.submitted:
+            return
+
+        body = draft.text.strip()
+        if not body and not draft.images:
+            st.warning("Write a question or paste a screenshot.")
+            return
+
+        try:
+            question_id = repository.ask_question(
+                case_id=str(case["id"]),
+                body=body or "See attached screenshot(s).",
+                section_key=section_key,
+            )
+            if draft.images:
+                _upload_question_images(
+                    repository,
+                    user_id=user_id,
+                    case_id=str(case["id"]),
+                    question_id=question_id,
+                    images=list(draft.images),
+                )
+        except (APIError, ValueError, Exception) as exc:
+            message = getattr(exc, "message", None) or str(exc)
+            st.error(message)
+            return
+
+        clear_comment_draft(draft_key)
+        st.toast("Question sent to your trainer")
+        st.rerun()
+
+
 def render_trainee_questions(
     repository: TrainingRepository,
     *,
@@ -123,52 +328,13 @@ def render_trainee_questions(
     metrics[1].metric("Answered", answered)
     metrics[2].metric("Total", len(questions))
 
-    with st.container(border=True):
-        st.markdown("**Ask a question**")
-        options = section_options()
-        labels = {
-            (key or "__general__"): label for key, label in options
-        }
-        keys = [key or "__general__" for key, _label in options]
-        selected = st.selectbox(
-            "Context",
-            options=keys,
-            format_func=lambda value: labels[value],
-            key=f"q_section_{case['id']}",
-        )
-        section_key = None if selected == "__general__" else selected
-        draft_key = f"ask_question_{case['id']}"
-        draft = comment_box(
-            key=draft_key,
-            placeholder="What do you need help with? Paste screenshots with Ctrl+V",
-            submit_label="Send question",
-        )
-        if draft.submitted:
-            body = draft.text.strip()
-            if not body and not draft.images:
-                st.warning("Write a question or paste a screenshot.")
-            else:
-                try:
-                    question_id = repository.ask_question(
-                        case_id=case["id"],
-                        body=body or "See attached screenshot(s).",
-                        section_key=section_key,
-                    )
-                    if draft.images:
-                        _upload_question_images(
-                            repository,
-                            user_id=user_id,
-                            case_id=case["id"],
-                            question_id=question_id,
-                            images=list(draft.images),
-                        )
-                except (APIError, ValueError, Exception) as exc:
-                    message = getattr(exc, "message", None) or str(exc)
-                    st.error(message)
-                else:
-                    clear_comment_draft(draft_key)
-                    st.toast("Question sent")
-                    st.rerun()
+    render_ask_question_entry(
+        repository,
+        user_id=user_id,
+        case=case,
+        key_prefix="trainee_q_tab",
+        default_scope="general",
+    )
 
     if not questions:
         st.caption("No questions on this case yet.")
@@ -383,72 +549,6 @@ def render_trainer_case_questions(
                         st.rerun()
 
 
-def _render_new_question_form(
-    repository: TrainingRepository,
-    *,
-    user_id: str,
-    cases: list[dict[str, Any]],
-) -> None:
-    eligible = [row for row in cases if str(row.get("status")) != "not_started"]
-    if not eligible:
-        st.caption("Questions unlock once a case is assigned.")
-        return
-
-    case_choices = {row["id"]: case_label(row) for row in eligible}
-    case_id = st.selectbox(
-        "Case",
-        options=list(case_choices),
-        format_func=lambda value: case_choices[value],
-        key="question_inbox_new_case",
-    )
-    options = section_options()
-    section_labels = {(key or "__general__"): label for key, label in options}
-    section_keys = [key or "__general__" for key, _label in options]
-    selected_key = st.selectbox(
-        "Context",
-        options=section_keys,
-        format_func=lambda value: section_labels[value],
-        key=f"question_inbox_new_section_{case_id}",
-    )
-    section_key = None if selected_key == "__general__" else selected_key
-
-    draft_key = f"question_inbox_new_draft_{case_id}"
-    draft = comment_box(
-        key=draft_key,
-        placeholder="What do you need help with? Paste screenshots with Ctrl+V",
-        submit_label="Send question",
-    )
-    if not draft.submitted:
-        return
-
-    body = draft.text.strip()
-    if not body and not draft.images:
-        st.warning("Write a question or paste a screenshot.")
-        return
-
-    try:
-        question_id = repository.ask_question(
-            case_id=case_id,
-            body=body or "See attached screenshot(s).",
-            section_key=section_key,
-        )
-        if draft.images:
-            _upload_question_images(
-                repository,
-                user_id=user_id,
-                case_id=case_id,
-                question_id=question_id,
-                images=list(draft.images),
-            )
-    except (APIError, ValueError, Exception) as exc:
-        message = getattr(exc, "message", None) or str(exc)
-        st.error(message)
-    else:
-        clear_comment_draft(draft_key)
-        st.toast("Question sent")
-        st.rerun()
-
-
 def render_trainee_question_inbox(
     repository: TrainingRepository,
     *,
@@ -466,8 +566,13 @@ def render_trainee_question_inbox(
     metrics[1].metric("Open", count_open_questions(rows))
     metrics[2].metric("Total", len(rows))
 
-    with st.expander("Ask a new question", icon=":material/add_circle:"):
-        _render_new_question_form(repository, user_id=user_id, cases=cases)
+    # Always visible — not buried in an expander.
+    render_home_ask_question(
+        repository,
+        user_id=user_id,
+        cases=cases,
+        key_prefix="question_inbox_ask",
+    )
 
     if not rows:
         st.caption("No questions yet — ask one above.")

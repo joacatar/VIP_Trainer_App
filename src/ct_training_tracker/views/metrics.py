@@ -1,14 +1,25 @@
-"""Trainer analytics / forecasting presentation."""
+"""Trainer analytics / forecasting presentation (Feature 7)."""
 
 from __future__ import annotations
+
+from datetime import date
+from statistics import mean
 
 import pandas as pd
 import streamlit as st
 
-from ct_training_tracker.analytics import (
-    build_training_analytics,
-    format_days,
-    format_rate,
+from ct_training_tracker.analytics import format_rate
+from ct_training_tracker.case_labels import case_catalog_label, case_label
+from ct_training_tracker.metrics import (
+    avg_days_per_case_by_trainee,
+    est_completion_by_trainee,
+    first_pass_rate_by_trainee,
+    first_pass_trend,
+    hardest_cases,
+    recurring_issues,
+    regression_rate,
+    regression_rate_by_trainee,
+    section_correction_rates,
 )
 from ct_training_tracker.repository import TrainingRepository
 from ct_training_tracker.revisions import section_label
@@ -21,146 +32,193 @@ def render_training_analytics(
 ) -> None:
     st.subheader("Performance & forecast")
     st.caption(
-        "Derived from timestamped tracking events and published corrections — "
-        "not from mutable status alone."
+        "Coach where it matters — first-pass trend, regressions, and "
+        "recurring issues from correction threads."
     )
 
     try:
         case_rows = repository.list_case_training_metrics()
-        section_rows = repository.list_correction_section_stats()
+        threads = repository.list_all_correction_threads()
     except Exception as exc:
         st.warning(f"Metrics views are not available yet: {exc}")
         return
 
     if not include_test:
-        case_rows = [
-            row for row in case_rows if not row.get("trainee_is_test")
+        case_rows = [row for row in case_rows if not row.get("trainee_is_test")]
+        live_case_ids = {
+            str(row.get("case_id") or row.get("id") or "") for row in case_rows
+        }
+        threads = [
+            thread
+            for thread in threads
+            if str(thread.get("case_id") or "") in live_case_ids
         ]
 
-    analytics = build_training_analytics(
-        case_rows,
-        section_rows,
-        label_for=section_label,
-    )
+    # Normalize id field used by metrics helpers.
+    cases = [
+        {
+            **row,
+            "id": row.get("case_id") or row.get("id"),
+        }
+        for row in case_rows
+    ]
+    trainee_names = {
+        str(row.get("trainee_id") or ""): str(row.get("trainee_name") or "Trainee")
+        for row in cases
+    }
 
-    with st.container(horizontal=True, gap="small"):
+    rates = first_pass_rate_by_trainee(threads, cases)
+    trends = first_pass_trend(threads, cases, window=10)
+    overall_rate = mean(rates.values()) if rates else None
+    # Aggregated sparkline: mean of each window index across trainees.
+    spark: list[float] = []
+    if trends:
+        max_len = max(len(series) for series in trends.values())
+        for index in range(max_len):
+            points = [
+                series[index]
+                for series in trends.values()
+                if index < len(series)
+            ]
+            if points:
+                spark.append(mean(points))
+    delta = None
+    if len(spark) >= 2:
+        delta = spark[-1] - spark[-2]
+
+    regressions = regression_rate(threads)
+    forecasts = est_completion_by_trainee(cases, today=date.today())
+    hardest = hardest_cases(threads, cases, top_n=5)
+    recurring = recurring_issues(threads, min_cases=3, top_n=10)
+    avg_days = avg_days_per_case_by_trainee(cases)
+    regressions_by = regression_rate_by_trainee(threads, cases)
+    section_rows = section_correction_rates(threads, cases)
+
+    case_label_by_id = {
+        str(row.get("id") or ""): (
+            f"Set {row.get('set_no')} · Case {case_catalog_label(row)}"
+            if row.get("set_no")
+            else case_label(row)
+        )
+        for row in cases
+    }
+
+    top = st.columns(3, gap="medium")
+    with top[0]:
         st.metric(
             "First-pass rate",
-            format_rate(analytics.first_pass_rate),
+            format_rate(overall_rate),
+            delta=(f"{delta:+.0%}" if delta is not None else None),
+            help="Share of cases with zero correction threads ever raised.",
+            border=True,
+        )
+        if spark:
+            st.caption("Trend across recent case windows")
+            st.line_chart({"First-pass": spark}, height=120)
+    with top[1]:
+        st.metric(
+            "Regression rate",
+            format_rate(regressions),
             help=(
-                f"{analytics.first_pass_cases} of {analytics.cases_with_submit} "
-                "submitted/approved cases closed without replacement or resubmit."
+                "Share of threads that were resolved, then marked still open "
+                "again."
             ),
             border=True,
         )
-        st.metric(
-            "Published revisions",
-            analytics.published_revisions,
-            help="Count of revision_published events across all cases.",
-            border=True,
-        )
-        st.metric(
-            "Resubmissions",
-            analytics.resubmission_events,
-            help="Extra package submits after the first submit on a case.",
-            border=True,
-        )
-        st.metric(
-            "Trainee turnaround",
-            format_days(analytics.avg_trainee_turnaround_days),
-            help="Average days from homework assigned to first package submit.",
-            border=True,
-        )
+        st.caption("Reopened after a resolve — coach the fragile ones.")
+    with top[2]:
+        with st.container(border=True):
+            st.markdown("**Est. completion**")
+            if not forecasts:
+                st.caption("No trainee pace data yet.")
+            else:
+                for trainee_id, when in sorted(
+                    forecasts.items(),
+                    key=lambda item: trainee_names.get(item[0], item[0]),
+                ):
+                    name = trainee_names.get(trainee_id, trainee_id)
+                    stamp = when.isoformat() if when else "—"
+                    st.markdown(f"{name} · **{stamp}**")
 
-    with st.container(horizontal=True, gap="small"):
-        st.metric(
-            "Trainer turnaround",
-            format_days(analytics.avg_trainer_turnaround_days),
-            help=(
-                "Average days from first package submit to first published "
-                "review or approval."
-            ),
-            border=True,
+    st.markdown("**Hardest cases**")
+    if not hardest:
+        st.caption("No correction threads yet.")
+    else:
+        for index, row in enumerate(hardest, start=1):
+            count = int(row["count"])
+            if count >= 10:
+                color = "red"
+            elif count >= 5:
+                color = "orange"
+            else:
+                color = "gray"
+            label = case_label_by_id.get(row["case_id"], row["case_id"])
+            trainee = row.get("trainee") or "Trainee"
+            st.markdown(
+                f"{index}. **{label}** · {trainee} · "
+                f":{color}-badge[{count} corrections]"
+            )
+
+    st.markdown("**Recurring issues across trainees**")
+    if not recurring:
+        st.caption("No issues shared across 3+ cases yet.")
+    else:
+        for row in recurring:
+            text = str(row["normalized_text"])
+            display = text if len(text) <= 60 else text[:57] + "…"
+            badge = (
+                " · :blue-badge[Resource candidate]"
+                if int(row["case_count"]) >= 3
+                else ""
+            )
+            st.markdown(
+                f"**{display}** · {row['case_count']} cases{badge}"
+            )
+
+    st.markdown("**By trainee**")
+    table_rows = []
+    for trainee_id, name in sorted(
+        trainee_names.items(), key=lambda item: item[1]
+    ):
+        table_rows.append(
+            {
+                "Trainee": name,
+                "First-pass": format_rate(rates.get(trainee_id)),
+                "Avg days/case": (
+                    f"{avg_days[trainee_id]:.1f}"
+                    if avg_days.get(trainee_id) is not None
+                    else "—"
+                ),
+                "Regression": format_rate(regressions_by.get(trainee_id, 0.0)),
+            }
         )
-        forecast = analytics.forecast
-        st.metric(
-            "Est. completion",
-            (
-                forecast.estimated_date.isoformat()
-                if forecast.estimated_date
-                else "—"
-            ),
-            help=forecast.explanation,
-            border=True,
-        )
-        st.metric(
-            "Remaining cases",
-            forecast.remaining_cases,
-            help="Cases not yet approved in the tracked cohort.",
-            border=True,
-        )
-        st.metric(
-            "Avg days / case",
-            format_days(forecast.avg_days_per_approved_case),
-            help="Observed assign→approve (or submit→approve) duration.",
-            border=True,
-        )
+    if table_rows:
+        st.dataframe(pd.DataFrame(table_rows), hide_index=True, width="stretch")
+    else:
+        st.caption("No trainees in this cohort.")
 
     with st.container(border=True):
         st.markdown("**How the forecast is calculated**")
-        st.caption(forecast.explanation)
-        if forecast.avg_days_per_approved_case is not None:
-            st.caption(
-                "Formula: today + (average observed days per approved case × "
-                "remaining open cases)."
-            )
+        st.caption(
+            "Per trainee: today + (average observed days per that trainee's "
+            "approved cases × their remaining open cases). Uses assign→approve "
+            "when available, otherwise submit→approve."
+        )
 
-    if analytics.section_hotspots:
-        st.markdown("**Recurring corrections by section**")
+    st.markdown("**Recurring corrections by section**")
+    if section_rows and any(row["correction_count"] for row in section_rows):
         hotspot_frame = pd.DataFrame(
             [
                 {
-                    "Section": item.label,
-                    "Corrections": item.correction_count,
-                    "Open": item.open_count,
-                    "Rolled forward": item.rolled_forward_count,
+                    "Section": section_label(row["section_key"]),
+                    "Corrections": row["correction_count"],
+                    "Open": row["open_count"],
+                    "% of cases": f"{row['case_share']:.0%}",
                 }
-                for item in analytics.section_hotspots
+                for row in section_rows
+                if row["correction_count"]
             ]
         )
         st.dataframe(hotspot_frame, hide_index=True, width="stretch")
     else:
         st.caption("No published section corrections yet.")
-
-    if analytics.planned_vs_actual:
-        with st.expander("Planned vs actual dates", expanded=False):
-            plan_frame = pd.DataFrame(analytics.planned_vs_actual).rename(
-                columns={
-                    "trainee_name": "Trainee",
-                    "set_no": "Set",
-                    "catalog_label": "Case",
-                    "planned_due": "Planned due",
-                    "actual_approved": "Approved on",
-                    "days_delta": "Delta (days)",
-                }
-            )
-            display_cols = [
-                col
-                for col in [
-                    "Trainee",
-                    "Set",
-                    "Case",
-                    "Planned due",
-                    "Approved on",
-                    "Delta (days)",
-                ]
-                if col in plan_frame.columns
-            ]
-            st.dataframe(
-                plan_frame[display_cols],
-                hide_index=True,
-                width="stretch",
-            )
-            st.caption(
-                "Negative delta means approved earlier than the homework due date."
-            )

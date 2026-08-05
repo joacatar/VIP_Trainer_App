@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, timedelta
+from statistics import mean
 from typing import Any, Literal
 
 from ct_training_tracker.case_labels import case_catalog_label
@@ -499,3 +500,394 @@ def waiting_label(row: dict[str, Any]) -> str:
     if overdue:
         parts.append(f"Overdue tasks: {overdue}")
     return " · ".join(parts) if parts else "Clear"
+
+
+# --- Feature 7 analytics (thread-based coaching metrics) ---
+
+
+def _normalize_issue_text(text: str) -> str:
+    lowered = text.lower().strip()
+    cleaned = "".join(
+        ch if ch.isalnum() or ch.isspace() else " " for ch in lowered
+    )
+    return " ".join(cleaned.split())
+
+
+def _thread_raised_body(thread: dict[str, Any]) -> str:
+    events = list(thread.get("correction_events") or [])
+    if not events and thread.get("event_type") == "raised":
+        return str(thread.get("body") or "")
+    raised = next(
+        (event for event in events if event.get("event_type") == "raised"),
+        None,
+    )
+    if raised is not None:
+        return str(raised.get("body") or "")
+    if events:
+        return str(events[0].get("body") or "")
+    return str(thread.get("body") or "")
+
+
+def _flatten_events(
+    threads: list[dict[str, Any]],
+    events: list[dict[str, Any]] | None,
+) -> list[dict[str, Any]]:
+    if events is not None:
+        return list(events)
+    flat: list[dict[str, Any]] = []
+    for thread in threads:
+        thread_id = str(thread.get("id") or "")
+        for event in thread.get("correction_events") or []:
+            flat.append({**event, "thread_id": event.get("thread_id") or thread_id})
+    return flat
+
+
+def hardest_cases(
+    threads: list[dict[str, Any]],
+    cases: list[dict[str, Any]] | None = None,
+    *,
+    top_n: int = 5,
+) -> list[dict[str, Any]]:
+    """Cases ranked by total correction-thread count (open + resolved)."""
+    cases = cases or []
+    trainee_by_case = {
+        str(case.get("id") or case.get("case_id") or ""): str(
+            case.get("trainee_name")
+            or case.get("trainee")
+            or case.get("trainee_id")
+            or ""
+        )
+        for case in cases
+    }
+    counts: dict[str, int] = {}
+    for thread in threads:
+        case_id = str(thread.get("case_id") or "")
+        if not case_id:
+            continue
+        counts[case_id] = counts.get(case_id, 0) + 1
+
+    ranked = sorted(
+        counts.items(),
+        key=lambda item: (-item[1], item[0]),
+    )
+    result: list[dict[str, Any]] = []
+    for case_id, count in ranked[:top_n]:
+        trainee = trainee_by_case.get(case_id, "")
+        if not trainee:
+            for thread in threads:
+                if str(thread.get("case_id")) == case_id:
+                    trainee = str(
+                        thread.get("trainee_name")
+                        or thread.get("trainee")
+                        or ""
+                    )
+                    break
+        result.append(
+            {"case_id": case_id, "trainee": trainee, "count": count}
+        )
+    return result
+
+
+def recurring_issues(
+    threads: list[dict[str, Any]],
+    *,
+    min_cases: int = 3,
+    top_n: int = 10,
+) -> list[dict[str, Any]]:
+    """Group threads by normalized raised-body text across distinct cases."""
+    groups: dict[str, dict[str, Any]] = {}
+    for thread in threads:
+        body = _thread_raised_body(thread)
+        if not body.strip():
+            continue
+        key = _normalize_issue_text(body)
+        if not key:
+            continue
+        bucket = groups.setdefault(
+            key,
+            {
+                "normalized_text": key,
+                "case_ids": set(),
+                "thread_ids": [],
+            },
+        )
+        case_id = str(thread.get("case_id") or "")
+        if case_id:
+            bucket["case_ids"].add(case_id)
+        thread_id = str(thread.get("id") or "")
+        if thread_id:
+            bucket["thread_ids"].append(thread_id)
+
+    ranked = [
+        {
+            "normalized_text": item["normalized_text"],
+            "case_count": len(item["case_ids"]),
+            "thread_ids": list(item["thread_ids"]),
+        }
+        for item in groups.values()
+        if len(item["case_ids"]) >= min_cases
+    ]
+    ranked.sort(
+        key=lambda row: (
+            -row["case_count"],
+            -len(row["thread_ids"]),
+            row["normalized_text"],
+        )
+    )
+    return ranked[:top_n]
+
+
+def regression_rate(
+    threads: list[dict[str, Any]],
+    events: list[dict[str, Any]] | None = None,
+) -> float:
+    """Share of threads with a still_open event after a resolved event."""
+    if not threads:
+        return 0.0
+    flat = _flatten_events(threads, events)
+    by_thread: dict[str, list[dict[str, Any]]] = {}
+    for event in flat:
+        thread_id = str(event.get("thread_id") or "")
+        if thread_id:
+            by_thread.setdefault(thread_id, []).append(event)
+
+    regressions = 0
+    for thread in threads:
+        thread_id = str(thread.get("id") or "")
+        timeline = sorted(
+            by_thread.get(thread_id, []),
+            key=lambda event: str(event.get("created_at") or ""),
+        )
+        saw_resolved = False
+        for event in timeline:
+            event_type = str(event.get("event_type") or "")
+            if event_type == "resolved":
+                saw_resolved = True
+            elif event_type == "still_open" and saw_resolved:
+                regressions += 1
+                break
+    return regressions / len(threads)
+
+
+def first_pass_rate_by_trainee(
+    threads: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+) -> dict[str, float]:
+    """Per trainee: share of cases that never had a correction thread."""
+    cases_with_threads = {
+        str(thread.get("case_id") or "")
+        for thread in threads
+        if thread.get("case_id")
+    }
+    by_trainee: dict[str, list[bool]] = {}
+    for case in cases:
+        trainee_id = str(case.get("trainee_id") or "")
+        case_id = str(case.get("id") or case.get("case_id") or "")
+        if not trainee_id or not case_id:
+            continue
+        by_trainee.setdefault(trainee_id, []).append(
+            case_id not in cases_with_threads
+        )
+    return {
+        trainee_id: (sum(flags) / len(flags) if flags else 0.0)
+        for trainee_id, flags in by_trainee.items()
+    }
+
+
+def first_pass_trend(
+    threads: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+    *,
+    window: int = 10,
+) -> dict[str, list[float]]:
+    """First-pass rate over successive groups of `window` cases per trainee."""
+    cases_with_threads = {
+        str(thread.get("case_id") or "")
+        for thread in threads
+        if thread.get("case_id")
+    }
+    by_trainee: dict[str, list[dict[str, Any]]] = {}
+    for case in cases:
+        trainee_id = str(case.get("trainee_id") or "")
+        if not trainee_id:
+            continue
+        by_trainee.setdefault(trainee_id, []).append(case)
+
+    trends: dict[str, list[float]] = {}
+    for trainee_id, trainee_cases in by_trainee.items():
+        ordered = sorted(
+            trainee_cases,
+            key=lambda row: (
+                str(row.get("approved_at") or row.get("assigned_at") or ""),
+                int(row.get("set_no") or 0),
+                int(row.get("case_no") or 0),
+                str(row.get("id") or row.get("case_id") or ""),
+            ),
+        )
+        rates: list[float] = []
+        if window <= 0 or not ordered:
+            trends[trainee_id] = rates
+            continue
+        for start_idx in range(0, len(ordered), window):
+            chunk = ordered[start_idx : start_idx + window]
+            first_pass = sum(
+                1
+                for case in chunk
+                if str(case.get("id") or case.get("case_id") or "")
+                not in cases_with_threads
+            )
+            rates.append(first_pass / len(chunk))
+        trends[trainee_id] = rates
+    return trends
+
+
+def avg_days_per_case_by_trainee(
+    cases: list[dict[str, Any]],
+) -> dict[str, float | None]:
+    """Mean assign→approve (or submit→approve) days per trainee."""
+
+    def _days(start: Any, end: Any) -> float | None:
+        if not start or not end:
+            return None
+        try:
+            start_d = date.fromisoformat(str(start)[:10])
+            end_d = date.fromisoformat(str(end)[:10])
+        except ValueError:
+            return None
+        return float((end_d - start_d).days)
+
+    by_trainee: dict[str, list[float]] = {}
+    for case in cases:
+        if str(case.get("status") or "") != "approved":
+            continue
+        trainee_id = str(case.get("trainee_id") or "")
+        if not trainee_id:
+            continue
+        days = _days(case.get("assigned_at"), case.get("approved_at"))
+        if days is None:
+            days = _days(case.get("first_submitted_at"), case.get("approved_at"))
+        if days is not None:
+            by_trainee.setdefault(trainee_id, []).append(days)
+    return {
+        trainee_id: (round(mean(values), 1) if values else None)
+        for trainee_id, values in by_trainee.items()
+    }
+
+
+def est_completion_by_trainee(
+    cases: list[dict[str, Any]],
+    revisions: list[dict[str, Any]] | None = None,
+    *,
+    today: date | None = None,
+) -> dict[str, date | None]:
+    """Per-trainee completion forecast using the same pace formula as blended."""
+    del revisions  # Timestamps live on case metric rows today.
+    today = today or date.today()
+    by_trainee: dict[str, list[dict[str, Any]]] = {}
+    for case in cases:
+        trainee_id = str(case.get("trainee_id") or "")
+        if trainee_id:
+            by_trainee.setdefault(trainee_id, []).append(case)
+
+    result: dict[str, date | None] = {}
+    for trainee_id, trainee_cases in by_trainee.items():
+        approved = [
+            row
+            for row in trainee_cases
+            if str(row.get("status") or "") == "approved"
+        ]
+        remaining = len(trainee_cases) - len(approved)
+        if remaining <= 0:
+            result[trainee_id] = today
+            continue
+        durations: list[float] = []
+        for row in approved:
+            try:
+                if row.get("assigned_at") and row.get("approved_at"):
+                    start = date.fromisoformat(str(row["assigned_at"])[:10])
+                    end = date.fromisoformat(str(row["approved_at"])[:10])
+                    durations.append(float((end - start).days))
+                elif row.get("first_submitted_at") and row.get("approved_at"):
+                    start = date.fromisoformat(
+                        str(row["first_submitted_at"])[:10]
+                    )
+                    end = date.fromisoformat(str(row["approved_at"])[:10])
+                    durations.append(float((end - start).days))
+            except ValueError:
+                continue
+        if not durations:
+            result[trainee_id] = None
+            continue
+        result[trainee_id] = today + timedelta(
+            days=round(mean(durations) * remaining)
+        )
+    return result
+
+
+def regression_rate_by_trainee(
+    threads: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+    events: list[dict[str, Any]] | None = None,
+) -> dict[str, float]:
+    """Regression rate scoped to each trainee's cases."""
+    trainee_by_case = {
+        str(case.get("id") or case.get("case_id") or ""): str(
+            case.get("trainee_id") or ""
+        )
+        for case in cases
+    }
+    by_trainee: dict[str, list[dict[str, Any]]] = {}
+    for thread in threads:
+        case_id = str(thread.get("case_id") or "")
+        trainee_id = trainee_by_case.get(case_id, "")
+        if trainee_id:
+            by_trainee.setdefault(trainee_id, []).append(thread)
+    return {
+        trainee_id: regression_rate(group, events)
+        for trainee_id, group in by_trainee.items()
+    }
+
+
+def section_correction_rates(
+    threads: list[dict[str, Any]],
+    cases: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Per-section correction counts plus % of cohort cases touched."""
+    total_cases = len(
+        {
+            str(case.get("id") or case.get("case_id") or "")
+            for case in cases
+            if case.get("id") or case.get("case_id")
+        }
+    )
+    by_section: dict[str, set[str]] = {}
+    open_by_section: dict[str, int] = {}
+    for thread in threads:
+        section = str(thread.get("section") or "")
+        case_id = str(thread.get("case_id") or "")
+        if not section:
+            continue
+        by_section.setdefault(section, set())
+        if case_id:
+            by_section[section].add(case_id)
+        if thread.get("status") == "open":
+            open_by_section[section] = open_by_section.get(section, 0) + 1
+
+    rows: list[dict[str, Any]] = []
+    for key, _label, _order in REVIEW_SECTIONS:
+        case_ids = by_section.get(key, set())
+        count = sum(
+            1 for thread in threads if str(thread.get("section") or "") == key
+        )
+        rate = (len(case_ids) / total_cases) if total_cases else 0.0
+        rows.append(
+            {
+                "section_key": key,
+                "correction_count": count,
+                "open_count": open_by_section.get(key, 0),
+                "case_count": len(case_ids),
+                "case_share": rate,
+            }
+        )
+    rows.sort(key=lambda row: (-row["correction_count"], row["section_key"]))
+    return rows

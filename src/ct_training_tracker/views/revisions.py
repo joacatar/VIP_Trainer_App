@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Iterator
+from contextlib import contextmanager
+from html import escape
+from typing import Any, Literal
 
 import streamlit as st
 from postgrest.exceptions import APIError
@@ -38,6 +41,130 @@ RELATED_FILE_GROUPS: tuple[tuple[str | None, str], ...] = (
     ("ov", "OV"),
     (None, "Not file-specific"),
 )
+
+_CORRECTION_ZONE_CSS = """
+<style>
+/* Notebook page shells — glow stays on the bordered container only */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > .ct-zone-needs),
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.ct-zone-needs) {
+  border-color: rgba(251, 146, 60, 0.4) !important;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(251, 146, 60, 0.10) 0%,
+      rgba(23, 32, 51, 0.55) 7rem,
+      rgba(23, 32, 51, 0.35) 100%
+    );
+  box-shadow:
+    0 0 0 1px rgba(251, 146, 60, 0.18),
+    0 12px 28px rgba(15, 23, 42, 0.35);
+  border-radius: 1rem;
+  padding-top: 0.15rem;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(> div > div > .ct-zone-ok),
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.ct-zone-ok) {
+  border-color: rgba(34, 197, 94, 0.35) !important;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(34, 197, 94, 0.09) 0%,
+      rgba(23, 32, 51, 0.55) 7rem,
+      rgba(23, 32, 51, 0.35) 100%
+    );
+  box-shadow:
+    0 0 0 1px rgba(34, 197, 94, 0.16),
+    0 12px 28px rgba(15, 23, 42, 0.32);
+  border-radius: 1rem;
+  padding-top: 0.15rem;
+}
+
+/* Section headings inside the notebook */
+.ct-nb-section {
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  margin: 1rem 0 0.4rem;
+  padding: 0.15rem 0 0.45rem;
+  border-bottom: 1px dashed rgba(148, 163, 184, 0.28);
+}
+.ct-nb-section.needs { color: #fdba74; }
+.ct-nb-section.ok { color: #86efac; }
+.ct-nb-section .ct-nb-meta {
+  font-weight: 500;
+  opacity: 0.7;
+  font-size: 0.82rem;
+  margin-left: 0.4rem;
+  letter-spacing: 0;
+}
+
+/* Note cards — accent only on the card, never the notebook page shell */
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.ct-nb-note-needs):not(
+  :has(.ct-zone-needs)
+):not(:has(.ct-zone-ok)) {
+  border-left: 3px solid #fb923c !important;
+  background: rgba(15, 23, 42, 0.28);
+  border-radius: 0.65rem;
+  box-shadow: none;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:has(.ct-nb-note-ok):not(
+  :has(.ct-zone-needs)
+):not(:has(.ct-zone-ok)) {
+  border-left: 3px solid #4ade80 !important;
+  background: rgba(15, 23, 42, 0.18);
+  border-radius: 0.65rem;
+  box-shadow: none;
+}
+</style>
+"""
+
+
+def _inject_correction_zone_styles() -> None:
+    st.markdown(_CORRECTION_ZONE_CSS, unsafe_allow_html=True)
+
+
+@contextmanager
+def _correction_zone(
+    kind: Literal["needs", "ok"],
+    *,
+    title: str,
+    detail: str,
+) -> Iterator[None]:
+    """Notebook page shell — orange for open work, green for passed sections."""
+    _inject_correction_zone_styles()
+    marker = "ct-zone-needs" if kind == "needs" else "ct-zone-ok"
+    accent = "orange" if kind == "needs" else "green"
+    icon = (
+        ":material/edit_note:" if kind == "needs" else ":material/check_circle:"
+    )
+    with st.container(border=True):
+        st.markdown(f'<span class="{marker}"></span>', unsafe_allow_html=True)
+        st.markdown(f"{icon} **:{accent}[{title}]**")
+        st.caption(detail)
+        yield
+
+
+def _cascade_section_title(
+    title: str,
+    *,
+    kind: Literal["needs", "ok"],
+    count_label: str | None = None,
+) -> None:
+    meta = (
+        f'<span class="ct-nb-meta">{escape(count_label)}</span>'
+        if count_label
+        else ""
+    )
+    st.markdown(
+        f'<div class="ct-nb-section {kind}">{escape(title)}{meta}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+@contextmanager
+def _cascade_indent(*, kind: Literal["needs", "ok"] = "needs") -> Iterator[None]:
+    """Keep corrections grouped under a section title (no outer rails)."""
+    del kind
+    yield
 
 
 def _open_threads(threads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -580,6 +707,61 @@ def _thread_history_caption(
     return (f"Raised in revision {first}", persisted)
 
 
+def _thread_body(thread: dict[str, Any]) -> str:
+    events = thread.get("correction_events") or []
+    raised = next(
+        (event for event in events if event.get("event_type") == "raised"),
+        None,
+    )
+    return str((raised or {}).get("body") or "")
+
+
+def _render_thread_attach_controls(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    thread: dict[str, Any],
+) -> None:
+    """Screenshot attach — popover so it does not nest another bordered box."""
+    with st.popover(
+        "Screenshots",
+        icon=":material/image:",
+        help="Paste or upload screenshots for this correction",
+    ):
+        draft_key = f"comment_attach_{thread['id']}"
+        draft = comment_box(
+            key=draft_key,
+            placeholder="Paste screenshots here (Ctrl+V / Cmd+V)",
+            submit_label="Save screenshots",
+        )
+        disk_images = _render_optional_upload(
+            upload_key=f"shot_{thread['id']}",
+        )
+        if not draft.submitted:
+            return
+        images = list(draft.images) + list(disk_images)
+        if not images:
+            st.warning("Paste or upload a screenshot first.")
+            return
+        try:
+            _upload_thread_images(
+                repository,
+                user_id=user_id,
+                case_id=case_id,
+                thread_id=thread["id"],
+                images=images,
+            )
+        except (APIError, ValueError, Exception) as exc:
+            message = getattr(exc, "message", None) or str(exc)
+            st.error(message)
+        else:
+            clear_comment_draft(draft_key)
+            _refresh_thread_overrides(repository, case_id)
+            st.toast(f"Attached {len(images)} screenshot(s)")
+            st.rerun(scope="fragment")
+
+
 def _render_thread_card(
     repository: TrainingRepository,
     *,
@@ -590,14 +772,11 @@ def _render_thread_card(
     revision_id: str | None,
     revision_no_by_id: dict[str, int],
     show_section_in_caption: bool = True,
+    bordered: bool | None = None,
 ) -> None:
+    """One correction. Open items get a single card border; resolved stay flat."""
     status = str(thread.get("status") or "open")
-    events = thread.get("correction_events") or []
-    raised = next(
-        (event for event in events if event.get("event_type") == "raised"),
-        None,
-    )
-    body = (raised or {}).get("body") or ""
+    body = _thread_body(thread)
     caption, persisted = _thread_history_caption(
         thread,
         revision_no_by_id=revision_no_by_id,
@@ -607,27 +786,37 @@ def _render_thread_card(
         section_bit = section_label(str(thread.get("section") or ""))
         caption = f"{section_bit} · {caption}" if caption else section_bit
 
-    with st.container(border=True):
-        head = st.columns([2, 1], vertical_alignment="center")
+    use_border = bordered if bordered is not None else status == "open"
+    with st.container(border=use_border):
+        if use_border:
+            note_kind = "needs" if status == "open" else "ok"
+            st.markdown(
+                f'<span class="ct-nb-note-{note_kind}"></span>',
+                unsafe_allow_html=True,
+            )
+        head = st.columns([3, 1], vertical_alignment="center")
         with head[0]:
-            badges = st.columns([1, 1], vertical_alignment="center")
-            with badges[0]:
+            with st.container(horizontal=True, gap="small"):
                 _thread_status_badge(status)
-            with badges[1]:
                 if file_label:
                     st.badge(
                         file_label,
                         icon=":material/description:",
                         color="gray",
                     )
-            if persisted >= 2:
-                st.caption(f":material/sync: Persisted {persisted} revisions")
+                if persisted >= 2 and status == "open":
+                    st.badge(
+                        f"{persisted} revs",
+                        icon=":material/sync:",
+                        color="orange",
+                    )
         with head[1]:
             if can_act and status == "open":
                 if st.button(
                     "Mark resolved",
                     key=f"resolve_thread_{thread['id']}",
                     width="stretch",
+                    type="primary",
                 ):
                     try:
                         repository.resolve_thread(thread["id"], revision_id)
@@ -652,7 +841,7 @@ def _render_thread_card(
                         st.toast("Reopened")
                         st.rerun(scope="fragment")
 
-        st.write(body)
+        st.markdown(body)
         if caption:
             st.caption(caption)
         _render_screenshots(
@@ -661,43 +850,13 @@ def _render_thread_card(
             key_prefix=f"thread_{thread['id']}",
         )
 
-        if not can_act or status != "open":
-            return
-
-        with st.expander(
-            "Add screenshots",
-            icon=":material/image:",
-        ):
-            draft_key = f"comment_attach_{thread['id']}"
-            draft = comment_box(
-                key=draft_key,
-                placeholder="Paste screenshots here (Ctrl+V / Cmd+V)",
-                submit_label="Save screenshots",
+        if can_act and status == "open":
+            _render_thread_attach_controls(
+                repository,
+                user_id=user_id,
+                case_id=case_id,
+                thread=thread,
             )
-            disk_images = _render_optional_upload(
-                upload_key=f"shot_{thread['id']}",
-            )
-            if draft.submitted:
-                images = list(draft.images) + list(disk_images)
-                if not images:
-                    st.warning("Paste or upload a screenshot first.")
-                else:
-                    try:
-                        _upload_thread_images(
-                            repository,
-                            user_id=user_id,
-                            case_id=case_id,
-                            thread_id=thread["id"],
-                            images=images,
-                        )
-                    except (APIError, ValueError, Exception) as exc:
-                        message = getattr(exc, "message", None) or str(exc)
-                        st.error(message)
-                    else:
-                        clear_comment_draft(draft_key)
-                        _refresh_thread_overrides(repository, case_id)
-                        st.toast(f"Attached {len(images)} screenshot(s)")
-                        st.rerun(scope="fragment")
 
 
 def _render_visible_checklist(
@@ -722,9 +881,10 @@ def _render_section_composer(
     case_id: str,
     section_key: str,
     revision_id: str | None,
+    key_prefix: str = "",
 ) -> None:
     options = list(checklist_for_section(section_key))
-    composer_key = f"{case_id}_{section_key}"
+    composer_key = f"{key_prefix}{case_id}_{section_key}"
 
     st.caption(
         "Checklist clicks stay in this box — the rest of the page will not jump."
@@ -802,6 +962,63 @@ def _render_section_composer(
     st.rerun(scope="fragment")
 
 
+def _render_add_correction_control(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    section_key: str,
+    revision_id: str | None,
+    label: str = "Add correction",
+    key_suffix: str = "",
+) -> None:
+    """Compact add entry — popover, not another nested bordered box."""
+    with st.popover(
+        label,
+        icon=":material/add:",
+        key=f"add_corr_pop_{case_id}_{section_key}_{key_suffix}",
+    ):
+        _render_section_composer(
+            repository,
+            user_id=user_id,
+            case_id=case_id,
+            section_key=section_key,
+            revision_id=revision_id,
+            key_prefix=f"{key_suffix}_",
+        )
+
+
+@st.fragment
+def _render_global_add_correction(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    revision_id: str | None,
+) -> None:
+    """Toolbar '+ Add correction' — pick a section, then compose."""
+    with st.popover(
+        "Add correction",
+        icon=":material/add:",
+        key=f"global_add_corr_{case_id}",
+    ):
+        section_keys = [key for key, _label, _order in REVIEW_SECTIONS]
+        section_key = st.selectbox(
+            "Section",
+            options=section_keys,
+            format_func=section_label,
+            key=f"global_add_section_{case_id}",
+        )
+        _render_section_composer(
+            repository,
+            user_id=user_id,
+            case_id=case_id,
+            section_key=str(section_key),
+            revision_id=revision_id,
+            key_prefix="global_",
+        )
+
+
 def _render_corrections_workspace(
     repository: TrainingRepository,
     *,
@@ -812,7 +1029,7 @@ def _render_corrections_workspace(
     revision_id: str | None,
     revision_no_by_id: dict[str, int],
 ) -> None:
-    """By-section / by-file toggle over the same open-thread list."""
+    """Open work first; passed sections collapse into a green rollup."""
     override = st.session_state.get(f"_threads_override_{case_id}")
     live_threads = override if override is not None else threads
 
@@ -829,50 +1046,119 @@ def _render_corrections_workspace(
             label_visibility="collapsed",
         )
     with add_col:
-        pass  # Add lives inside each group expander below
+        if can_act:
+            _render_global_add_correction(
+                repository,
+                user_id=user_id,
+                case_id=case_id,
+                revision_id=revision_id,
+            )
 
     if view is None:
         view = "section"
 
     open_threads = _open_threads(live_threads)
-    resolved = [
-        thread for thread in live_threads if thread.get("status") != "open"
-    ]
 
     if view == "file":
-        groups: list[tuple[str, list[dict[str, Any]]]] = []
-        for file_key, label in RELATED_FILE_GROUPS:
-            group = [
-                thread
-                for thread in open_threads
-                if (thread.get("related_file") or None) == file_key
-            ]
-            if group or file_key is not None:
-                groups.append((label, group))
-        for label, group in groups:
-            open_n = len(group)
-            with st.container(border=True):
-                head = st.columns([2, 1], vertical_alignment="center")
-                head[0].markdown(f"**{label}**")
-                with head[1]:
-                    if open_n:
-                        st.badge(f"{open_n} open", color="orange")
-                    else:
-                        st.caption("No open corrections")
-                for thread in group:
-                    _render_thread_card(
-                        repository,
-                        user_id=user_id,
-                        case_id=case_id,
-                        thread=thread,
-                        can_act=can_act,
-                        revision_id=revision_id,
-                        revision_no_by_id=revision_no_by_id,
-                        show_section_in_caption=True,
-                    )
+        _render_corrections_by_file(
+            repository,
+            user_id=user_id,
+            case_id=case_id,
+            open_threads=open_threads,
+            all_threads=live_threads,
+            can_act=can_act,
+            revision_id=revision_id,
+            revision_no_by_id=revision_no_by_id,
+        )
+        return
+
+    _render_corrections_by_section(
+        repository,
+        user_id=user_id,
+        case_id=case_id,
+        live_threads=live_threads,
+        can_act=can_act,
+        revision_id=revision_id,
+        revision_no_by_id=revision_no_by_id,
+    )
+
+
+def _render_corrections_by_section(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    live_threads: list[dict[str, Any]],
+    can_act: bool,
+    revision_id: str | None,
+    revision_no_by_id: dict[str, int],
+) -> None:
+    open_keys: list[str] = []
+    passed_keys: list[str] = []
+    for section_key, _label, _order in REVIEW_SECTIONS:
+        section_threads = [
+            t for t in live_threads if t.get("section") == section_key
+        ]
+        if _open_threads(section_threads):
+            open_keys.append(section_key)
+        else:
+            passed_keys.append(section_key)
+
+    open_count = sum(
+        len(
+            _open_threads(
+                [t for t in live_threads if t.get("section") == key]
+            )
+        )
+        for key in open_keys
+    )
+
+    if open_keys:
+        with _correction_zone(
+            "needs",
+            title="Needs improvement",
+            detail=(
+                f"{open_count} open correction"
+                f"{'s' if open_count != 1 else ''} across "
+                f"{len(open_keys)} section"
+                f"{'s' if len(open_keys) != 1 else ''}"
+            ),
+        ):
+            for section_key in open_keys:
+                _render_open_section_panel(
+                    repository,
+                    user_id=user_id,
+                    case_id=case_id,
+                    section_key=section_key,
+                    threads=[
+                        t
+                        for t in live_threads
+                        if t.get("section") == section_key
+                    ],
+                    can_act=can_act,
+                    revision_id=revision_id,
+                    revision_no_by_id=revision_no_by_id,
+                )
     else:
-        for section_key, _label, _order in REVIEW_SECTIONS:
-            _render_section_thread_panel(
+        st.success(
+            "No open corrections — every section is clear.",
+            icon=":material/check_circle:",
+        )
+
+    if not passed_keys:
+        return
+
+    with _correction_zone(
+        "ok",
+        title="Looks good",
+        detail=(
+            f"{len(passed_keys)} section"
+            f"{'s' if len(passed_keys) != 1 else ''} clear — "
+            "expand a section only to add or reopen"
+        ),
+    ):
+        for section_key in passed_keys:
+            _render_passed_section_row(
                 repository,
                 user_id=user_id,
                 case_id=case_id,
@@ -885,22 +1171,101 @@ def _render_corrections_workspace(
                 revision_no_by_id=revision_no_by_id,
             )
 
-    if resolved and view == "file":
-        with st.expander(f"{len(resolved)} resolved"):
-            for thread in resolved:
-                _render_thread_card(
-                    repository,
-                    user_id=user_id,
-                    case_id=case_id,
-                    thread=thread,
-                    can_act=can_act,
-                    revision_id=revision_id,
-                    revision_no_by_id=revision_no_by_id,
-                    show_section_in_caption=True,
+
+def _render_corrections_by_file(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    open_threads: list[dict[str, Any]],
+    all_threads: list[dict[str, Any]],
+    can_act: bool,
+    revision_id: str | None,
+    revision_no_by_id: dict[str, int],
+) -> None:
+    active_groups: list[tuple[str | None, str, list[dict[str, Any]]]] = []
+    clear_groups: list[tuple[str | None, str]] = []
+    for file_key, label in RELATED_FILE_GROUPS:
+        group = [
+            thread
+            for thread in open_threads
+            if (thread.get("related_file") or None) == file_key
+        ]
+        if group:
+            active_groups.append((file_key, label, group))
+        else:
+            clear_groups.append((file_key, label))
+
+    if active_groups:
+        with _correction_zone(
+            "needs",
+            title="Needs improvement",
+            detail=(
+                f"{len(open_threads)} open correction"
+                f"{'s' if len(open_threads) != 1 else ''} by file"
+            ),
+        ):
+            for _file_key, label, group in active_groups:
+                _cascade_section_title(
+                    label,
+                    kind="needs",
+                    count_label=f"{len(group)} open",
                 )
+                with _cascade_indent():
+                    for thread in group:
+                        _render_thread_card(
+                            repository,
+                            user_id=user_id,
+                            case_id=case_id,
+                            thread=thread,
+                            can_act=can_act,
+                            revision_id=revision_id,
+                            revision_no_by_id=revision_no_by_id,
+                            show_section_in_caption=True,
+                        )
+    else:
+        st.success(
+            "No open corrections — every file group is clear.",
+            icon=":material/check_circle:",
+        )
+
+    resolved = [
+        thread for thread in all_threads if thread.get("status") != "open"
+    ]
+    if not clear_groups and not resolved:
+        return
+
+    with _correction_zone(
+        "ok",
+        title="Looks good",
+        detail=(
+            f"{len(clear_groups)} file group"
+            f"{'s' if len(clear_groups) != 1 else ''} clear"
+            + (f" · {len(resolved)} resolved" if resolved else "")
+        ),
+    ):
+        if clear_groups:
+            for _key, label in clear_groups:
+                _cascade_section_title(label, kind="ok", count_label="clear")
+        if resolved:
+            st.caption("Resolved corrections")
+            with _cascade_indent(kind="ok"):
+                for thread in resolved:
+                    _render_thread_card(
+                        repository,
+                        user_id=user_id,
+                        case_id=case_id,
+                        thread=thread,
+                        can_act=can_act,
+                        revision_id=revision_id,
+                        revision_no_by_id=revision_no_by_id,
+                        show_section_in_caption=True,
+                        bordered=False,
+                    )
+
 
 @st.fragment
-def _render_section_thread_panel(
+def _render_open_section_panel(
     repository: TrainingRepository,
     *,
     user_id: str,
@@ -911,25 +1276,39 @@ def _render_section_thread_panel(
     revision_id: str | None,
     revision_no_by_id: dict[str, int],
 ) -> None:
-    """One section: header + one card per open thread + resolved rollup +
-    composer, as a self-contained fragment so saving/resolving reruns only
-    this section and the page never jumps."""
+    """One open section in the needs-improvement cascade."""
     override = st.session_state.get(_section_override_key(case_id, section_key))
     section_threads = override if override is not None else threads
     open_threads = _open_threads(section_threads)
     resolved_threads = [
         thread for thread in section_threads if thread.get("status") != "open"
     ]
+    title = section_label(section_key)
 
-    with st.container(border=True):
-        head = st.columns([2, 1], vertical_alignment="center")
-        head[0].markdown(f"**{section_label(section_key)}**")
-        with head[1]:
-            if open_threads:
-                st.badge(f"{len(open_threads)} open", color="orange")
-            else:
-                st.caption("No open corrections")
+    head = st.columns([3, 1], vertical_alignment="center")
+    with head[0]:
+        _cascade_section_title(
+            title,
+            kind="needs",
+            count_label=(
+                f"{len(open_threads)} open"
+                if len(open_threads) != 1
+                else "1 open"
+            ),
+        )
+    with head[1]:
+        if can_act:
+            _render_add_correction_control(
+                repository,
+                user_id=user_id,
+                case_id=case_id,
+                section_key=section_key,
+                revision_id=revision_id,
+                label="Add",
+                key_suffix="open",
+            )
 
+    with _cascade_indent(kind="needs"):
         for thread in open_threads:
             _render_thread_card(
                 repository,
@@ -939,10 +1318,14 @@ def _render_section_thread_panel(
                 can_act=can_act,
                 revision_id=revision_id,
                 revision_no_by_id=revision_no_by_id,
+                show_section_in_caption=False,
             )
 
         if resolved_threads:
-            with st.expander(f"{len(resolved_threads)} resolved"):
+            with st.expander(
+                f"{len(resolved_threads)} resolved earlier",
+                expanded=False,
+            ):
                 for thread in resolved_threads:
                     _render_thread_card(
                         repository,
@@ -952,17 +1335,64 @@ def _render_section_thread_panel(
                         can_act=can_act,
                         revision_id=revision_id,
                         revision_no_by_id=revision_no_by_id,
+                        show_section_in_caption=False,
+                        bordered=False,
                     )
 
+
+@st.fragment
+def _render_passed_section_row(
+    repository: TrainingRepository,
+    *,
+    user_id: str,
+    case_id: str,
+    section_key: str,
+    threads: list[dict[str, Any]],
+    can_act: bool,
+    revision_id: str | None,
+    revision_no_by_id: dict[str, int],
+) -> None:
+    """Passed section title in the green cascade — history stays collapsed."""
+    override = st.session_state.get(_section_override_key(case_id, section_key))
+    section_threads = override if override is not None else threads
+    resolved_threads = [
+        thread for thread in section_threads if thread.get("status") != "open"
+    ]
+    title = section_label(section_key)
+    count_label = (
+        f"{len(resolved_threads)} resolved" if resolved_threads else "clear"
+    )
+
+    row = st.columns([3, 1], vertical_alignment="center")
+    with row[0]:
+        _cascade_section_title(title, kind="ok", count_label=count_label)
+    with row[1]:
         if can_act:
-            with st.expander("Add correction", icon=":material/add:"):
-                _render_section_composer(
-                    repository,
-                    user_id=user_id,
-                    case_id=case_id,
-                    section_key=section_key,
-                    revision_id=revision_id,
-                )
+            _render_add_correction_control(
+                repository,
+                user_id=user_id,
+                case_id=case_id,
+                section_key=section_key,
+                revision_id=revision_id,
+                label="Add",
+                key_suffix="passed",
+            )
+
+    if resolved_threads:
+        with _cascade_indent(kind="ok"):
+            with st.expander("History", expanded=False):
+                for thread in resolved_threads:
+                    _render_thread_card(
+                        repository,
+                        user_id=user_id,
+                        case_id=case_id,
+                        thread=thread,
+                        can_act=can_act,
+                        revision_id=revision_id,
+                        revision_no_by_id=revision_no_by_id,
+                        show_section_in_caption=False,
+                        bordered=False,
+                    )
 
 
 def render_trainee_revisions(
@@ -977,7 +1407,10 @@ def render_trainee_revisions(
     )
     threads = repository.list_correction_threads(case["id"])
     if not revisions and not threads:
-        st.caption("No published review yet.")
+        st.caption(
+            "No published review yet. You can still ask a question above "
+            "anytime."
+        )
         return
 
     revision_no_by_id = {row["id"]: row["revision_no"] for row in revisions}
@@ -998,71 +1431,100 @@ def render_trainee_revisions(
             icon=":material/check_circle:",
         )
 
+    open_sections: list[tuple[str, str, list[dict[str, Any]]]] = []
+    passed_sections: list[tuple[str, str, list[dict[str, Any]]]] = []
     for section_key, title, _order in REVIEW_SECTIONS:
         section_threads = [
             thread for thread in threads if thread.get("section") == section_key
         ]
-        open_threads = _open_threads(section_threads)
-        resolved_threads = [
-            thread
-            for thread in section_threads
-            if thread.get("status") != "open"
-        ]
         if not section_threads:
             continue
+        if _open_threads(section_threads):
+            open_sections.append((section_key, title, section_threads))
+        else:
+            passed_sections.append((section_key, title, section_threads))
 
-        with st.container(border=True):
-            head = st.columns([2, 1], vertical_alignment="center")
-            head[0].markdown(f"**{title}**")
-            with head[1]:
-                if open_threads:
-                    st.badge(f"{len(open_threads)} to fix", color="orange")
-                else:
-                    st.badge("Resolved", color="green")
-
-            for thread in open_threads:
-                with st.container(border=True):
-                    _thread_status_badge("open")
-                    events = thread.get("correction_events") or []
-                    raised = next(
-                        (
-                            event
-                            for event in events
-                            if event.get("event_type") == "raised"
-                        ),
-                        None,
-                    )
-                    st.write((raised or {}).get("body") or "")
-                    caption, _persisted = _thread_history_caption(
-                        thread,
-                        revision_no_by_id=revision_no_by_id,
-                    )
-                    if caption:
-                        st.caption(caption)
-                    _render_screenshots(
-                        repository,
-                        thread.get("correction_thread_screenshots") or [],
-                        key_prefix=f"trainee_thread_{thread['id']}",
-                    )
-
-            if resolved_threads:
-                with st.expander(f"{len(resolved_threads)} resolved"):
-                    for thread in resolved_threads:
+    if open_sections:
+        with _correction_zone(
+            "needs",
+            title="Needs improvement",
+            detail=(
+                f"{open_count} open item"
+                f"{'s' if open_count != 1 else ''} to address"
+            ),
+        ):
+            for _section_key, title, section_threads in open_sections:
+                open_list = _open_threads(section_threads)
+                resolved_list = [
+                    thread
+                    for thread in section_threads
+                    if thread.get("status") != "open"
+                ]
+                _cascade_section_title(
+                    title,
+                    kind="needs",
+                    count_label=(
+                        f"{len(open_list)} to fix"
+                        if len(open_list) != 1
+                        else "1 to fix"
+                    ),
+                )
+                with _cascade_indent(kind="needs"):
+                    for thread in open_list:
                         with st.container(border=True):
-                            _thread_status_badge("resolved")
-                            events = thread.get("correction_events") or []
-                            raised = next(
-                                (
-                                    event
-                                    for event in events
-                                    if event.get("event_type") == "raised"
-                                ),
-                                None,
+                            st.markdown(
+                                '<span class="ct-nb-note-needs"></span>',
+                                unsafe_allow_html=True,
                             )
-                            st.write((raised or {}).get("body") or "")
+                            _thread_status_badge("open")
+                            st.markdown(_thread_body(thread))
                             caption, _persisted = _thread_history_caption(
                                 thread,
                                 revision_no_by_id=revision_no_by_id,
                             )
                             if caption:
                                 st.caption(caption)
+                            _render_screenshots(
+                                repository,
+                                thread.get("correction_thread_screenshots")
+                                or [],
+                                key_prefix=f"trainee_thread_{thread['id']}",
+                            )
+                    if resolved_list:
+                        with st.expander(
+                            f"{len(resolved_list)} resolved in {title}"
+                        ):
+                            for thread in resolved_list:
+                                _thread_status_badge("resolved")
+                                st.markdown(_thread_body(thread))
+                                caption, _persisted = _thread_history_caption(
+                                    thread,
+                                    revision_no_by_id=revision_no_by_id,
+                                )
+                                if caption:
+                                    st.caption(caption)
+
+    if passed_sections:
+        with _correction_zone(
+            "ok",
+            title="Looks good",
+            detail=(
+                f"{len(passed_sections)} section"
+                f"{'s' if len(passed_sections) != 1 else ''} clear"
+            ),
+        ):
+            for _section_key, title, section_threads in passed_sections:
+                resolved_list = [
+                    thread
+                    for thread in section_threads
+                    if thread.get("status") != "open"
+                ]
+                _cascade_section_title(
+                    title,
+                    kind="ok",
+                    count_label=(
+                        f"{len(resolved_list)} resolved"
+                        if resolved_list
+                        else "clear"
+                    ),
+                )

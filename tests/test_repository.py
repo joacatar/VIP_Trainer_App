@@ -470,3 +470,74 @@ def test_list_correction_threads_filters_and_sorts_events() -> None:
     assert [event["id"] for event in events] == ["e1", "e2"]
     shots = threads[0]["correction_thread_screenshots"]
     assert [shot["id"] for shot in shots] == ["s1", "s2"]
+
+
+class BulkDueQuery:
+    def __init__(self, client: "BulkDueClient", table_name: str) -> None:
+        self._client = client
+        self._table = table_name
+        self._payload: dict[str, Any] | None = None
+        self._case_id: str | None = None
+
+    def update(self, payload: dict[str, Any]) -> "BulkDueQuery":
+        self._payload = payload
+        return self
+
+    def eq(self, column: str, value: Any) -> "BulkDueQuery":
+        if column == "id" or column == "case_id":
+            self._case_id = str(value)
+        return self
+
+    def execute(self) -> SimpleNamespace:
+        assert self._payload is not None
+        assert self._case_id is not None
+        if self._table == "cases" and self._case_id in self._client.fail_on_cases:
+            raise RuntimeError(f"failed {self._case_id}")
+        self._client.calls.append((self._table, self._case_id, dict(self._payload)))
+        return SimpleNamespace(data=[])
+
+
+class BulkDueClient:
+    def __init__(self, fail_on_cases: set[str] | None = None) -> None:
+        self.fail_on_cases = fail_on_cases or set()
+        self.calls: list[tuple[str, str, dict[str, Any]]] = []
+
+    def table(self, name: str) -> BulkDueQuery:
+        return BulkDueQuery(self, name)
+
+
+def test_bulk_update_due_dates_updates_cases_and_homework() -> None:
+    client = BulkDueClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    failed = repository.bulk_update_due_dates(
+        [
+            ("case-a", dt.date(2026, 8, 10)),
+            ("case-b", dt.date(2026, 8, 11)),
+        ]
+    )
+
+    assert failed == []
+    assert client.calls == [
+        ("cases", "case-a", {"due_date": "2026-08-10"}),
+        ("homework_assignments", "case-a", {"due_date": "2026-08-10"}),
+        ("cases", "case-b", {"due_date": "2026-08-11"}),
+        ("homework_assignments", "case-b", {"due_date": "2026-08-11"}),
+    ]
+
+
+def test_bulk_update_due_dates_reports_partial_failures() -> None:
+    client = BulkDueClient(fail_on_cases={"case-b"})
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    failed = repository.bulk_update_due_dates(
+        [
+            ("case-a", dt.date(2026, 8, 10)),
+            ("case-b", dt.date(2026, 8, 11)),
+            ("case-c", dt.date(2026, 8, 12)),
+        ]
+    )
+
+    assert failed == ["case-b"]
+    updated_cases = [case_id for table, case_id, _ in client.calls if table == "cases"]
+    assert updated_cases == ["case-a", "case-c"]

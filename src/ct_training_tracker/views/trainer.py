@@ -32,13 +32,19 @@ from ct_training_tracker.trainee_filters import (
     filter_trainees,
     trainee_display_name,
 )
+from ct_training_tracker.views.bulk_due_dates import (
+    clear_selection_if_leaving_cases,
+    render_bulk_due_date_panel,
+    render_selection_controls,
+    selected_case_ids,
+)
 from ct_training_tracker.views.case_board import (
     enrich_cases,
     render_case_summary,
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainer_case_review
-from ct_training_tracker.views.kanban import render_case_board
+from ct_training_tracker.views.kanban import collect_board_cards, render_case_board
 from ct_training_tracker.views.metrics import render_training_analytics
 from ct_training_tracker.views.questions import (
     render_trainer_case_questions,
@@ -49,6 +55,7 @@ from ct_training_tracker.views.revisions import render_trainer_revisions
 
 
 def render_dashboard(repository: TrainingRepository) -> None:
+    clear_selection_if_leaving_cases()
     render_page_header(
         "Training overview",
         "Start with what needs you, then scan trainee progress.",
@@ -233,6 +240,7 @@ def _render_all_trainees_table(rows: list[dict]) -> None:
 
 
 def render_trainees(repository: TrainingRepository, user_id: str) -> None:
+    clear_selection_if_leaving_cases()
     render_page_header(
         "Add trainee",
         "Create a trainee profile and generate their scheduled training cases.",
@@ -350,13 +358,17 @@ def _assign_case(
 
 def render_cases(repository: TrainingRepository, user_id: str) -> None:
     del user_id
-    header_col, refresh_col = st.columns([5, 1], vertical_alignment="bottom")
+    header_col, select_col, refresh_col = st.columns(
+        [4, 1, 1], vertical_alignment="bottom"
+    )
     with header_col:
         render_page_header(
             "Cases",
             "Board is the scan view. Inbox is for assigning homework and "
             "per-trainee detail.",
         )
+    with select_col:
+        render_selection_controls()
     with refresh_col:
         if st.button(
             "Refresh",
@@ -385,6 +397,24 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
                 "accounts, or add a real trainee."
             )
         return
+
+    selected_ids = selected_case_ids()
+    if selected_ids:
+        # Lookup covers every visible trainee so cross-trainee selection works.
+        board_cards = collect_board_cards(repository, trainees)
+        cases_by_id = {
+            card.case_id: {
+                "id": card.case_id,
+                "trainee_id": card.trainee_id,
+                "trainee_name": card.trainee_name,
+                "set_no": card.set_no,
+                "catalog_label": card.case_label.removeprefix("Case "),
+                "due_date": card.due_date,
+                "schedule_due_date": card.due_date,
+            }
+            for card in board_cards
+        }
+        render_bulk_due_date_panel(repository, cases_by_id)
 
     requested_view = query_value("view") or "board"
     board_label = ":material/view_column: Board"
@@ -513,6 +543,7 @@ def render_trainer_case_workspace(
     user_id: str,
 ) -> None:
     """Deep review surface — not used for homework assignment."""
+    clear_selection_if_leaving_cases()
     trainee_id = query_value("trainee")
     case_id = query_value("case")
     if not trainee_id or not case_id:

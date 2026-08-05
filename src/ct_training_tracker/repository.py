@@ -183,6 +183,35 @@ class TrainingRepository:
         ).execute()
         return cast(str, result.data)
 
+    def bulk_update_due_dates(
+        self,
+        updates: list[tuple[str, dt.date]],
+    ) -> list[str]:
+        """Update due dates for many cases. Returns case ids that failed.
+
+        Non-atomic on purpose — successes stick; callers can re-run failures.
+        Updates both cases.due_date and any matching homework_assignments row.
+        """
+        failed: list[str] = []
+        for case_id, due_date in updates:
+            iso = due_date.isoformat()
+            try:
+                (
+                    self._client.table("cases")
+                    .update({"due_date": iso})
+                    .eq("id", case_id)
+                    .execute()
+                )
+                (
+                    self._client.table("homework_assignments")
+                    .update({"due_date": iso})
+                    .eq("case_id", case_id)
+                    .execute()
+                )
+            except Exception:
+                failed.append(case_id)
+        return failed
+
     def list_homework_for_cases(
         self,
         case_ids: list[str],
@@ -580,16 +609,45 @@ class TrainingRepository:
         if status is not None:
             query = query.eq("status", status)
         result = query.execute()
-        rows = cast(list[dict[str, Any]], result.data or [])
+        return self._hydrate_correction_threads(
+            cast(list[dict[str, Any]], result.data or [])
+        )
+
+    def list_all_correction_threads(
+        self,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """All correction threads (trainer analytics)."""
+        query = (
+            self._client.table("corrections_threads")
+            .select(
+                "id, case_id, section, status, related_file, created_at, "
+                "resolved_at, resolved_in_revision_id, "
+                "correction_events(id, revision_id, event_type, body, created_at)"
+            )
+            .order("created_at")
+        )
+        if status is not None:
+            query = query.eq("status", status)
+        result = query.execute()
+        return self._hydrate_correction_threads(
+            cast(list[dict[str, Any]], result.data or [])
+        )
+
+    @staticmethod
+    def _hydrate_correction_threads(
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
         for thread in rows:
             thread["correction_events"] = sorted(
                 thread.get("correction_events") or [],
                 key=lambda event: str(event.get("created_at") or ""),
             )
-            thread["correction_thread_screenshots"] = sorted(
-                thread.get("correction_thread_screenshots") or [],
-                key=lambda shot: str(shot.get("created_at") or ""),
-            )
+            if "correction_thread_screenshots" in thread:
+                thread["correction_thread_screenshots"] = sorted(
+                    thread.get("correction_thread_screenshots") or [],
+                    key=lambda shot: str(shot.get("created_at") or ""),
+                )
         return rows
 
     def create_correction_thread(

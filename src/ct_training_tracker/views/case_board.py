@@ -23,6 +23,11 @@ from ct_training_tracker.metrics import (
     waiting_on_other_statuses,
 )
 from ct_training_tracker.routing import query_value, set_query
+from ct_training_tracker.views.bulk_due_dates import (
+    is_select_mode,
+    selected_case_ids,
+    toggle_case_selected,
+)
 
 CaseFilter = Literal["needs_you", "with_other", "all"]
 
@@ -200,6 +205,15 @@ def _render_case_row(
 ) -> bool:
     """Compact scannable case row. Returns True when clicked."""
     with st.container(border=True):
+        if is_select_mode():
+            case_id = str(row["id"])
+            checked = st.checkbox(
+                "Select",
+                value=case_id in selected_case_ids(),
+                key=f"{key}_bulk_select",
+                label_visibility="collapsed",
+            )
+            toggle_case_selected(case_id, selected=checked)
         title_col, badge_col = st.columns([2.1, 1.1], vertical_alignment="center")
         clicked = title_col.button(
             case_label(row),
