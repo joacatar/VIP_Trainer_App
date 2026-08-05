@@ -37,6 +37,7 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainer_case_review
+from ct_training_tracker.views.kanban import render_case_board
 from ct_training_tracker.views.metrics import render_training_analytics
 from ct_training_tracker.views.questions import (
     render_trainer_case_questions,
@@ -352,8 +353,8 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
     with header_col:
         render_page_header(
             "Cases",
-            "Assign homework from the inbox. Open Review only when a "
-            "package is ready.",
+            "Board is the scan view. Inbox is for assigning homework and "
+            "per-trainee detail.",
         )
     with refresh_col:
         if st.button(
@@ -384,6 +385,51 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
             )
         return
 
+    requested_view = query_value("view") or "board"
+    board_label = ":material/view_column: Board"
+    inbox_label = ":material/inbox: Inbox"
+    default_tab = inbox_label if requested_view == "inbox" else board_label
+    board_tab, inbox_tab = st.tabs(
+        [board_label, inbox_label],
+        key="cases_view_tabs",
+        on_change="rerun",
+        default=default_tab,
+    )
+
+    if board_tab.open:
+        with board_tab:
+            labels = {row["id"]: trainee_display_name(row) for row in trainees}
+            requested_trainee = query_value("trainee")
+            options = ["__all__", *labels]
+            default_index = 0
+            if requested_trainee in labels:
+                default_index = options.index(requested_trainee)
+            filter_id = st.selectbox(
+                "Trainee filter",
+                options=options,
+                index=default_index,
+                format_func=lambda value: (
+                    "All trainees" if value == "__all__" else labels[value]
+                ),
+                key="board_trainee_filter",
+            )
+            render_case_board(
+                repository,
+                trainees,
+                trainee_filter_id=(
+                    None if filter_id == "__all__" else str(filter_id)
+                ),
+            )
+
+    if inbox_tab.open:
+        with inbox_tab:
+            _render_cases_inbox(repository, trainees)
+
+
+def _render_cases_inbox(
+    repository: TrainingRepository,
+    trainees: list[dict],
+) -> None:
     labels = {row["id"]: trainee_display_name(row) for row in trainees}
     trainee_ids = list(labels)
     requested_trainee = query_value("trainee")
@@ -397,9 +443,10 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
             options=trainee_ids,
             index=trainee_index,
             format_func=lambda value: labels[value],
+            key="inbox_trainee_select",
         )
     if trainee_id != requested_trainee:
-        set_query(trainee=trainee_id, case=None)
+        set_query(trainee=trainee_id, case=None, view="inbox")
         st.rerun()
 
     cases = cached_trainee_cases(repository, trainee_id, include_files=True)

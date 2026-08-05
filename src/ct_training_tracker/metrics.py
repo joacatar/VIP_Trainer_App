@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any, Literal
 
+from ct_training_tracker.case_labels import case_catalog_label
 from ct_training_tracker.revisions import REVIEW_SECTIONS
 
 CaseOwner = Literal["trainee", "trainer", "none"]
@@ -246,6 +247,186 @@ def case_attention_state(
         has_open_question=has_open_question,
         needs_assignment=status == "not_started",
     )
+
+
+def board_card_badge(
+    attention: CaseAttention,
+    *,
+    due_date: str | None,
+    has_open_question: bool,
+    today: date,
+) -> tuple[str, str] | None:
+    """At most ONE (label, color) badge per kanban card.
+
+    Priority: Overdue > Due today > Question open. Approved cards get none.
+    """
+    if attention.state == "approved":
+        return None
+    if attention.overdue:
+        return ("Overdue", "red")
+    if due_date:
+        try:
+            if date.fromisoformat(str(due_date)) == today:
+                return ("Due today", "orange")
+        except ValueError:
+            pass
+    if has_open_question or attention.has_open_question:
+        return ("Question", "orange")
+    return None
+
+
+BOARD_LANES: tuple[tuple[AttentionState, str], ...] = (
+    ("assigned", "Assigned"),
+    ("with_trainee", "With trainee"),
+    ("needs_trainer", "Needs you"),
+    ("approved", "Approved"),
+)
+
+APPROVED_VISIBLE = 2
+
+
+@dataclass(frozen=True, slots=True)
+class BoardCard:
+    case_id: str
+    trainee_id: str
+    trainee_name: str
+    case_label: str
+    set_no: int
+    state: AttentionState
+    due_date: str | None
+    badge_label: str | None
+    badge_color: str | None
+    footer: str
+    footer_urgent: bool
+    open_question_count: int
+    needs_assignment: bool
+
+
+def _format_short_date(raw: str | None) -> str | None:
+    if not raw:
+        return None
+    try:
+        value = date.fromisoformat(str(raw)[:10])
+    except ValueError:
+        return str(raw)[:10]
+    return f"{value.strftime('%b')} {value.day}"
+
+
+def board_card_footer(
+    attention: CaseAttention,
+    *,
+    due_date: str | None,
+    open_question_count: int,
+    revision_sent_at: str | None = None,
+) -> tuple[str, bool]:
+    """(footer text, urgent). Urgent marks overdue due dates in red."""
+    if attention.state == "approved":
+        return ("", False)
+    if attention.state == "needs_trainer" and open_question_count:
+        noun = "question" if open_question_count == 1 else "questions"
+        return (f"{open_question_count} open {noun}", False)
+    if attention.state == "with_trainee":
+        sent = _format_short_date(revision_sent_at)
+        if sent:
+            return (f"Revision sent {sent}", False)
+        return ("Awaiting trainee", False)
+    due = _format_short_date(due_date)
+    if due:
+        return (f"Due {due}", attention.overdue)
+    if attention.needs_assignment:
+        return ("Needs assignment", False)
+    return ("", False)
+
+
+def build_board_card(
+    case: dict[str, Any],
+    *,
+    trainee_name: str,
+    today: date,
+    open_questions: list[dict[str, Any]] | None = None,
+    revisions: list[dict[str, Any]] | None = None,
+    threads: list[dict[str, Any]] | None = None,
+) -> BoardCard:
+    """One kanban card from a case row + optional related rows."""
+    questions = open_questions or []
+    attention = case_attention_state(
+        case,
+        revisions or [],
+        threads or [],
+        questions,
+        today,
+    )
+    due = case.get("due_date") or case.get("schedule_due_date")
+    due_str = str(due)[:10] if due else None
+    open_q = sum(1 for q in questions if str(q.get("status") or "") == "open")
+    badge = board_card_badge(
+        attention,
+        due_date=due_str,
+        has_open_question=open_q > 0,
+        today=today,
+    )
+    published = [
+        r
+        for r in (revisions or [])
+        if str(r.get("status") or "") == "published" and r.get("published_at")
+    ]
+    published.sort(key=lambda r: str(r.get("published_at") or ""), reverse=True)
+    revision_sent = (
+        str(published[0]["published_at"])[:10] if published else None
+    )
+    footer, urgent = board_card_footer(
+        attention,
+        due_date=due_str,
+        open_question_count=open_q,
+        revision_sent_at=revision_sent,
+    )
+    label = f"Case {case_catalog_label(case)}"
+    return BoardCard(
+        case_id=str(case["id"]),
+        trainee_id=str(case.get("trainee_id") or ""),
+        trainee_name=trainee_name,
+        case_label=label,
+        set_no=int(case.get("set_no") or 0),
+        state=attention.state,
+        due_date=due_str,
+        badge_label=badge[0] if badge else None,
+        badge_color=badge[1] if badge else None,
+        footer=footer,
+        footer_urgent=urgent,
+        open_question_count=open_q,
+        needs_assignment=attention.needs_assignment,
+    )
+
+
+def group_board_cards(
+    cards: list[BoardCard],
+) -> dict[AttentionState, list[BoardCard]]:
+    """Partition cards into the four kanban lanes, sorted for scanability."""
+    lanes: dict[AttentionState, list[BoardCard]] = {
+        state: [] for state, _label in BOARD_LANES
+    }
+    for card in cards:
+        lanes[card.state].append(card)
+
+    def due_key(card: BoardCard) -> str:
+        return card.due_date or "9999-99-99"
+
+    for state in lanes:
+        if state == "needs_trainer":
+            lanes[state].sort(
+                key=lambda c: (
+                    0 if c.badge_label == "Overdue" else 1,
+                    0 if c.badge_label == "Due today" else 1,
+                    0 if c.badge_label == "Question" else 1,
+                    due_key(c),
+                    c.case_label,
+                )
+            )
+        elif state == "approved":
+            lanes[state].sort(key=lambda c: (c.set_no, c.case_label))
+        else:
+            lanes[state].sort(key=lambda c: (due_key(c), c.case_label))
+    return lanes
 
 
 TrainerCaseBucket = Literal["needs_you", "with_other", "approved"]

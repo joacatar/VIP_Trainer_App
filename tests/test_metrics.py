@@ -4,10 +4,13 @@ from ct_training_tracker.metrics import (
     FileWaitingCounts,
     ProgressTotals,
     TaskCounts,
+    board_card_badge,
+    build_board_card,
     case_attention_state,
     count_file_waiting,
     count_tasks,
     first_pass_sections,
+    group_board_cards,
     open_thread_count_by_section,
     summarize_progress,
     threads_persisting_n_revisions,
@@ -91,6 +94,112 @@ def test_trainer_case_bucket_matches_attention_states() -> None:
     assert trainer_case_bucket("corrections_sent") == "with_other"
     assert trainer_case_bucket("assigned") == "with_other"
     assert trainer_case_bucket("approved") == "approved"
+
+
+def test_board_card_badge_priority_overdue_then_due_today_then_question() -> None:
+    overdue = _attention({"status": "in_review", "due_date": "2026-08-01"})
+    assert board_card_badge(
+        overdue, due_date="2026-08-01", has_open_question=True, today=TODAY
+    ) == ("Overdue", "red")
+
+    due_today = _attention({"status": "in_review", "due_date": "2026-08-04"})
+    assert board_card_badge(
+        due_today, due_date="2026-08-04", has_open_question=True, today=TODAY
+    ) == ("Due today", "orange")
+
+    question = _attention({"status": "in_review", "due_date": "2026-08-10"})
+    assert board_card_badge(
+        question, due_date="2026-08-10", has_open_question=True, today=TODAY
+    ) == ("Question", "orange")
+
+    approved = _attention({"status": "approved", "due_date": "2026-08-01"})
+    assert (
+        board_card_badge(
+            approved, due_date="2026-08-01", has_open_question=True, today=TODAY
+        )
+        is None
+    )
+
+
+def test_build_board_card_and_group_lanes() -> None:
+    cards = [
+        build_board_card(
+            {
+                "id": "c1",
+                "trainee_id": "t1",
+                "status": "in_review",
+                "due_date": "2026-08-01",
+                "set_no": 1,
+                "case_no": 13,
+                "catalog_label": "13A",
+            },
+            trainee_name="Aaron Fong",
+            today=TODAY,
+        ),
+        build_board_card(
+            {
+                "id": "c2",
+                "trainee_id": "t1",
+                "status": "corrections_sent",
+                "due_date": "2026-08-10",
+                "set_no": 1,
+                "case_no": 12,
+                "catalog_label": "12A",
+            },
+            trainee_name="Aaron Fong",
+            today=TODAY,
+            revisions=[{"status": "published", "published_at": "2026-08-03T12:00:00Z"}],
+        ),
+        build_board_card(
+            {
+                "id": "c3",
+                "trainee_id": "t2",
+                "status": "assigned",
+                "due_date": "2026-08-12",
+                "set_no": 1,
+                "case_no": 16,
+                "catalog_label": "16A",
+            },
+            trainee_name="Max Pentecost",
+            today=TODAY,
+        ),
+        build_board_card(
+            {
+                "id": "c4",
+                "trainee_id": "t1",
+                "status": "approved",
+                "set_no": 1,
+                "case_no": 1,
+                "catalog_label": "1A",
+            },
+            trainee_name="Aaron Fong",
+            today=TODAY,
+        ),
+    ]
+    # Pad approved so overflow logic stays testable at the UI layer.
+    for index in range(5):
+        cards.append(
+            build_board_card(
+                {
+                    "id": f"approved-{index}",
+                    "trainee_id": "t1",
+                    "status": "approved",
+                    "set_no": 1,
+                    "case_no": index + 2,
+                    "catalog_label": f"{index + 2}A",
+                },
+                trainee_name="Aaron Fong",
+                today=TODAY,
+            )
+        )
+
+    lanes = group_board_cards(cards)
+    assert [c.case_label for c in lanes["needs_trainer"]] == ["Case 13A"]
+    assert lanes["needs_trainer"][0].badge_label == "Overdue"
+    assert lanes["needs_trainer"][0].footer_urgent is True
+    assert lanes["with_trainee"][0].footer == "Revision sent Aug 3"
+    assert lanes["assigned"][0].case_label == "Case 16A"
+    assert len(lanes["approved"]) == 6
 
 
 def test_open_thread_count_by_section_counts_only_open_threads() -> None:
