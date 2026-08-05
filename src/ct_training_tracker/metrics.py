@@ -1,6 +1,8 @@
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ct_training_tracker.revisions import REVIEW_SECTIONS
+
 CaseOwner = Literal["trainee", "trainer", "none"]
 AppRole = Literal["trainee", "trainer"]
 
@@ -182,6 +184,46 @@ def file_slot_label(status: str) -> str:
     if status == "missing":
         return "To send"
     return str(status).replace("_", " ").title()
+
+
+def open_thread_count_by_section(
+    threads: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Open correction-thread counts keyed by section."""
+    counts: dict[str, int] = {}
+    for thread in threads:
+        if thread.get("status") != "open":
+            continue
+        section = str(thread.get("section") or "")
+        counts[section] = counts.get(section, 0) + 1
+    return counts
+
+
+def threads_persisting_n_revisions(
+    threads: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> dict[str, int]:
+    """Distinct revisions each open thread has survived, keyed by thread id."""
+    revisions_by_thread: dict[str, set[str]] = {
+        str(thread["id"]): set()
+        for thread in threads
+        if thread.get("status") == "open"
+    }
+    for event in events:
+        thread_id = str(event.get("thread_id") or "")
+        revision_id = event.get("revision_id")
+        if thread_id in revisions_by_thread and revision_id:
+            revisions_by_thread[thread_id].add(str(revision_id))
+    return {
+        thread_id: len(revision_ids)
+        for thread_id, revision_ids in revisions_by_thread.items()
+    }
+
+
+def first_pass_sections(threads: list[dict[str, Any]]) -> list[str]:
+    """Sections that never had a correction thread raised."""
+    raised = {str(thread.get("section") or "") for thread in threads}
+    return [key for key, _label, _order in REVIEW_SECTIONS if key not in raised]
 
 
 def waiting_label(row: dict[str, Any]) -> str:

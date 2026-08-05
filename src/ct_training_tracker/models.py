@@ -22,6 +22,25 @@ class HomeworkCase(TypedDict):
     order_number: str
 
 
+class CorrectionThread(TypedDict):
+    id: str
+    case_id: str
+    section: str
+    status: Literal["open", "resolved"]
+    created_at: str
+    resolved_at: str | None
+    resolved_in_revision_id: str | None
+
+
+class CorrectionEvent(TypedDict):
+    id: str
+    thread_id: str
+    revision_id: str | None
+    event_type: Literal["raised", "still_open", "resolved", "note"]
+    body: str | None
+    created_at: str
+
+
 class HomeworkAssignment(TypedDict):
     id: str
     case_id: str

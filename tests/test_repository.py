@@ -228,3 +228,136 @@ def test_list_revisions_for_case_orders_newest_first() -> None:
 
     assert ("eq", ("case_id", "case-1")) in client.query.calls
     assert client.query.order_calls == [(("revision_no",), {"desc": True})]
+
+
+def test_create_correction_thread_uses_atomic_rpc() -> None:
+    client = RpcClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    thread_id = repository.create_correction_thread(
+        case_id="case-1",
+        section="scan",
+        body="Fix the scan orientation.",
+        revision_id="rev-1",
+    )
+
+    assert thread_id == "assignment-id"
+    assert client.name == "create_correction_thread"
+    assert client.params == {
+        "target_case_id": "case-1",
+        "target_section": "scan",
+        "thread_body": "Fix the scan orientation.",
+        "target_revision_id": "rev-1",
+    }
+
+
+def test_resolve_and_reopen_thread_call_rpcs() -> None:
+    client = RpcClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.resolve_thread("thread-1", "rev-2")
+    assert client.name == "resolve_correction_thread"
+    assert client.params == {
+        "target_thread_id": "thread-1",
+        "target_revision_id": "rev-2",
+    }
+
+    repository.reopen_thread("thread-1", "rev-3")
+    assert client.name == "reopen_correction_thread"
+    assert client.params == {
+        "target_thread_id": "thread-1",
+        "target_revision_id": "rev-3",
+    }
+
+
+def test_mark_open_threads_still_open_returns_stamped_count() -> None:
+    class CountRpcClient:
+        def rpc(self, name: str, params: dict[str, Any]) -> "CountRpcClient":
+            self.name = name
+            self.params = params
+            return self
+
+        def execute(self) -> SimpleNamespace:
+            return SimpleNamespace(data=2)
+
+    client = CountRpcClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    stamped = repository.mark_open_threads_still_open(
+        case_id="case-1",
+        revision_id="rev-4",
+    )
+
+    assert stamped == 2
+    assert client.name == "mark_open_threads_still_open"
+    assert client.params == {
+        "target_case_id": "case-1",
+        "target_revision_id": "rev-4",
+    }
+
+
+def test_add_correction_event_inserts_row() -> None:
+    class InsertQuery:
+        def __init__(self) -> None:
+            self.inserted: dict[str, Any] | None = None
+
+        def insert(self, payload: dict[str, Any]) -> "InsertQuery":
+            self.inserted = payload
+            return self
+
+        def execute(self) -> SimpleNamespace:
+            return SimpleNamespace(data=[])
+
+    class InsertClient:
+        def __init__(self) -> None:
+            self.query = InsertQuery()
+            self.table_name = ""
+
+        def table(self, name: str) -> InsertQuery:
+            self.table_name = name
+            return self.query
+
+    client = InsertClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.add_correction_event(
+        thread_id="thread-1",
+        revision_id="rev-1",
+        event_type="note",
+        body="Discussed on the call.",
+    )
+
+    assert client.table_name == "correction_events"
+    assert client.query.inserted == {
+        "thread_id": "thread-1",
+        "revision_id": "rev-1",
+        "event_type": "note",
+        "body": "Discussed on the call.",
+    }
+
+
+def test_list_correction_threads_filters_and_sorts_events() -> None:
+    data = [
+        {
+            "id": "t1",
+            "correction_events": [
+                {"id": "e2", "created_at": "2026-01-02"},
+                {"id": "e1", "created_at": "2026-01-01"},
+            ],
+            "correction_thread_screenshots": [
+                {"id": "s2", "created_at": "2026-01-02"},
+                {"id": "s1", "created_at": "2026-01-01"},
+            ],
+        }
+    ]
+    client = RecordingClient(data)
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    threads = repository.list_correction_threads("case-1", status="open")
+
+    assert ("eq", ("case_id", "case-1")) in client.query.calls
+    assert ("eq", ("status", "open")) in client.query.calls
+    events = threads[0]["correction_events"]
+    assert [event["id"] for event in events] == ["e1", "e2"]
+    shots = threads[0]["correction_thread_screenshots"]
+    assert [shot["id"] for shot in shots] == ["s1", "s2"]

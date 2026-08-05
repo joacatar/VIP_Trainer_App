@@ -556,6 +556,111 @@ class TrainingRepository:
             },
         ).execute()
 
+    def list_correction_threads(
+        self,
+        case_id: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = (
+            self._client.table("corrections_threads")
+            .select(
+                "id, case_id, section, status, created_at, resolved_at, "
+                "resolved_in_revision_id, "
+                "correction_events(id, revision_id, event_type, body, created_at), "
+                "correction_thread_screenshots("
+                "id, storage_path, original_filename, mime_type, size_bytes, "
+                "created_at"
+                ")"
+            )
+            .eq("case_id", case_id)
+            .order("created_at")
+        )
+        if status is not None:
+            query = query.eq("status", status)
+        result = query.execute()
+        rows = cast(list[dict[str, Any]], result.data or [])
+        for thread in rows:
+            thread["correction_events"] = sorted(
+                thread.get("correction_events") or [],
+                key=lambda event: str(event.get("created_at") or ""),
+            )
+            thread["correction_thread_screenshots"] = sorted(
+                thread.get("correction_thread_screenshots") or [],
+                key=lambda shot: str(shot.get("created_at") or ""),
+            )
+        return rows
+
+    def create_correction_thread(
+        self,
+        *,
+        case_id: str,
+        section: str,
+        body: str,
+        revision_id: str | None,
+    ) -> str:
+        """Create the thread and its first 'raised' event in one operation."""
+        result = self._client.rpc(
+            "create_correction_thread",
+            {
+                "target_case_id": case_id,
+                "target_section": section,
+                "thread_body": body,
+                "target_revision_id": revision_id,
+            },
+        ).execute()
+        return cast(str, result.data)
+
+    def add_correction_event(
+        self,
+        *,
+        thread_id: str,
+        revision_id: str | None,
+        event_type: str,
+        body: str | None = None,
+    ) -> None:
+        self._client.table("correction_events").insert(
+            {
+                "thread_id": thread_id,
+                "revision_id": revision_id,
+                "event_type": event_type,
+                "body": body,
+            }
+        ).execute()
+
+    def resolve_thread(self, thread_id: str, revision_id: str | None) -> None:
+        self._client.rpc(
+            "resolve_correction_thread",
+            {
+                "target_thread_id": thread_id,
+                "target_revision_id": revision_id,
+            },
+        ).execute()
+
+    def reopen_thread(self, thread_id: str, revision_id: str | None) -> None:
+        self._client.rpc(
+            "reopen_correction_thread",
+            {
+                "target_thread_id": thread_id,
+                "target_revision_id": revision_id,
+            },
+        ).execute()
+
+    def mark_open_threads_still_open(
+        self,
+        *,
+        case_id: str,
+        revision_id: str,
+    ) -> int:
+        """Stamp every open thread with a 'still_open' event on a revision."""
+        result = self._client.rpc(
+            "mark_open_threads_still_open",
+            {
+                "target_case_id": case_id,
+                "target_revision_id": revision_id,
+            },
+        ).execute()
+        return int(result.data or 0)
+
     def get_case_owner_user_id(self, case_id: str) -> str | None:
         result = (
             self._client.table("cases")
@@ -617,6 +722,52 @@ class TrainingRepository:
                 .insert(
                     {
                         "correction_id": correction_id,
+                        "storage_path": object_path,
+                        "original_filename": object_path.rsplit("/", 1)[-1],
+                        "mime_type": mime_type,
+                        "size_bytes": len(content),
+                        "uploaded_by": user_id,
+                    }
+                )
+                .execute()
+            )
+        except Exception:
+            self._client.storage.from_(CASE_FILES_BUCKET).remove([object_path])
+            raise
+        rows = result.data or []
+        return cast(str, rows[0]["id"] if rows else "")
+
+    def upload_thread_screenshot(
+        self,
+        *,
+        user_id: str,
+        case_id: str,
+        thread_id: str,
+        filename: str,
+        content: bytes,
+        mime_type: str | None,
+    ) -> str:
+        owner_user_id = self.get_case_owner_user_id(case_id) or user_id
+        object_path = screenshot_storage_path(
+            owner_user_id=owner_user_id,
+            case_id=case_id,
+            correction_id=thread_id,
+            filename=filename,
+        )
+        self._client.storage.from_(CASE_FILES_BUCKET).upload(
+            object_path,
+            content,
+            file_options={
+                "content-type": mime_type or "application/octet-stream",
+                "upsert": "false",
+            },
+        )
+        try:
+            result = (
+                self._client.table("correction_thread_screenshots")
+                .insert(
+                    {
+                        "thread_id": thread_id,
                         "storage_path": object_path,
                         "original_filename": object_path.rsplit("/", 1)[-1],
                         "mime_type": mime_type,
