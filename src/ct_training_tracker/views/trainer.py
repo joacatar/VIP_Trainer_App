@@ -70,82 +70,82 @@ def render_dashboard(repository: TrainingRepository) -> None:
     totals = summarize_progress(rows)
     open_questions = repository.count_open_questions()
 
-    with st.container(horizontal=True, gap="small"):
-        st.metric(
-            "Needs review",
-            totals.waiting_on_trainer,
-            help="Packages waiting for your revision or send-back.",
-            border=True,
-        )
-        st.metric(
-            "Overdue",
-            totals.overdue_cases,
-            help="Cases past due that are not approved yet.",
-            border=True,
-        )
-        st.metric(
-            "Awaiting trainee",
-            totals.waiting_on_trainee,
-            help="File slots trainees still need to prepare or replace.",
-            border=True,
-        )
-        st.metric(
-            "Open questions",
-            open_questions,
-            help="Trainee questions waiting for your answer.",
-            border=True,
-        )
+    question_word = "open question" if open_questions == 1 else "open questions"
+    st.markdown(
+        f":blue[**{totals.waiting_on_trainer}** need review] · "
+        f":red[**{totals.overdue_cases}** overdue] · "
+        f":gray[**{totals.waiting_on_trainee}** awaiting trainee] · "
+        f":orange[**{open_questions}** {question_word}]"
+    )
+    done_ratio = (
+        totals.approved_cases / totals.total_cases if totals.total_cases else 0.0
+    )
+    bar_col, caption_col = st.columns([4, 1], vertical_alignment="center")
+    bar_col.progress(done_ratio)
+    caption_col.caption(
+        f"{totals.approved_cases} of {totals.total_cases} approved"
+    )
 
-    with st.container(border=True):
-        done_ratio = (
-            totals.approved_cases / totals.total_cases if totals.total_cases else 0.0
-        )
-        st.markdown("**Overall completion**")
-        st.caption(
-            f"{totals.approved_cases} of {totals.total_cases} cases approved "
-            f"across {totals.trainees} trainees."
-        )
-        st.progress(done_ratio)
+    attention_tab, analytics_tab = st.tabs(
+        ["Needs attention", "Performance & forecast"],
+        key="dashboard_tabs",
+        on_change="rerun",
+    )
+    if attention_tab.open:
+        with attention_tab:
+            _render_attention_feed(repository, rows)
+    if analytics_tab.open:
+        with analytics_tab:
+            _render_all_trainees_table(rows)
+            render_training_analytics(repository, include_test=include_test)
+
+
+def _render_attention_feed(
+    repository: TrainingRepository,
+    rows: list[dict],
+) -> None:
+    """One card per trainee with actionable chips, then the open questions."""
+    for row in sorted(
+        rows,
+        key=lambda item: (
+            -int(item.get("waiting_on_trainer", 0)),
+            -int(item.get("overdue_cases", 0)),
+            -int(item.get("waiting_on_trainee", 0)),
+        ),
+    ):
+        in_review = int(row.get("waiting_on_trainer", 0))
+        overdue = int(row.get("overdue_cases", 0))
+        to_send = int(row.get("waiting_on_trainee", 0))
+        chips: list[str] = []
+        if in_review:
+            chips.append(f":blue-badge[{in_review} in review]")
+        if overdue:
+            chips.append(f":red-badge[{overdue} overdue]")
+        if to_send:
+            chips.append(f":gray-badge[{to_send} files to send]")
+        with st.container(border=True):
+            left, right = st.columns([3, 1], vertical_alignment="center")
+            with left:
+                st.markdown(f"**{trainee_display_name(row)}**")
+                st.markdown(
+                    " ".join(chips) if chips else ":green-badge[All clear]"
+                )
+            if right.button(
+                "Open cases",
+                key=f"open_cases_{row['trainee_id']}",
+                type="primary",
+                width="stretch",
+                icon=":material/arrow_forward:",
+            ):
+                st.switch_page(
+                    "app_pages/trainer_cases.py",
+                    query_params={"trainee": row["trainee_id"]},
+                )
 
     render_trainer_question_inbox(repository)
 
-    attention = [
-        row
-        for row in rows
-        if int(row.get("waiting_on_trainer", 0))
-        or int(row.get("waiting_on_trainee", 0))
-        or int(row.get("overdue_cases", 0))
-    ]
-    st.subheader("Needs attention")
-    if not attention:
-        st.success("Nothing waiting right now.")
-    else:
-        for row in sorted(
-            attention,
-            key=lambda item: (
-                -int(item.get("waiting_on_trainer", 0)),
-                -int(item.get("overdue_cases", 0)),
-                -int(item.get("waiting_on_trainee", 0)),
-            ),
-        ):
-            with st.container(border=True):
-                left, right = st.columns([3, 1], vertical_alignment="center")
-                left.markdown(
-                    f"**{trainee_display_name(row)}**  \n"
-                    f"{waiting_label(row)}"
-                )
-                if right.button(
-                    "Open cases",
-                    key=f"open_cases_{row['trainee_id']}",
-                    type="primary",
-                    width="stretch",
-                    icon=":material/arrow_forward:",
-                ):
-                    st.switch_page(
-                        "app_pages/trainer_cases.py",
-                        query_params={"trainee": row["trainee_id"]},
-                    )
 
+def _render_all_trainees_table(rows: list[dict]) -> None:
     frame = pd.DataFrame(rows)
     frame["display_name"] = frame.apply(trainee_display_name, axis=1)
     frame["case_progress"] = (
@@ -185,8 +185,6 @@ def render_dashboard(repository: TrainingRepository) -> None:
             hide_index=True,
             width="stretch",
         )
-
-    render_training_analytics(repository, include_test=include_test)
 
 
 def render_trainees(repository: TrainingRepository, user_id: str) -> None:

@@ -10,7 +10,6 @@ from postgrest.exceptions import APIError
 from ct_training_tracker.case_labels import (
     case_catalog_label,
     case_label,
-    case_order_number,
 )
 from ct_training_tracker.components.paste_image import (
     PastedImage,
@@ -239,81 +238,33 @@ def render_trainee_questions(
 
 
 def render_trainer_question_inbox(repository: TrainingRepository) -> None:
-    st.subheader("Question inbox")
-    status_filter = st.segmented_control(
-        "Status",
-        options=STATUS_FILTER_OPTIONS,
-        format_func=lambda value: "All" if value == "all" else question_status_label(
-            value
-        ),
-        default="open",
-        key="trainer_inbox_status_filter",
-        label_visibility="collapsed",
-    )
-    if status_filter is None:
-        status_filter = "open"
-
-    rows = repository.list_questions_for_trainer(
-        status=None if status_filter == "all" else status_filter
-    )
+    """Compact list of OPEN questions only; answered/resolved ones live in
+    each case's Questions tab."""
+    st.subheader("Open questions")
+    rows = repository.list_questions_for_trainer(status="open")
     if not rows:
-        st.success(
-            "No questions match this filter." if status_filter != "open"
-            else "No open questions.",
-            icon=":material/check_circle:",
-        )
+        st.success("No open questions.", icon=":material/check_circle:")
         return
-
-    trainee_names = sorted(
-        {
-            (
-                (row.get("cases") or {}).get("trainees") or {}
-            ).get("full_name")
-            or "Trainee"
-            for row in rows
-            if isinstance(row.get("cases"), dict)
-        }
-    )
-    trainee_filter = st.selectbox(
-        "Trainee",
-        options=["__all__", *trainee_names],
-        format_func=lambda value: "All trainees" if value == "__all__" else value,
-        key="trainer_inbox_trainee_filter",
-    )
 
     for row in rows:
         case = row.get("cases") if isinstance(row.get("cases"), dict) else {}
         trainee = case.get("trainees") if isinstance(case.get("trainees"), dict) else {}
         trainee_name = trainee.get("full_name") or "Trainee"
-        if trainee_filter != "__all__" and trainee_name != trainee_filter:
-            continue
         label = case_catalog_label(case) if case else "?"
-        order = case_order_number(case) if case else None
-        case_bit = f"Case {label}" + (f" · {order}" if order else "")
-        title = (
-            f"{trainee_name} · {case_bit} · "
-            f"{question_section_label(row.get('section_key'))} · "
-            f"{question_status_label(str(row.get('status') or 'open'))}"
+        body = str(row.get("body") or "").strip()
+        title = body.splitlines()[0][:90] if body else (
+            question_section_label(row.get("section_key"))
         )
         with st.container(border=True):
-            st.markdown(f"**{title}**")
-            st.write(row.get("body") or "")
-            if row.get("answer_body"):
-                st.caption(f"Your answer: {row['answer_body']}")
-            st.caption(str(row.get("created_at") or ""))
-            cols = st.columns([1, 1])
-            if cols[0].button(
-                "Open case",
-                key=f"open_q_case_{row['id']}",
-                width="stretch",
-            ):
-                set_query(trainee=case.get("trainee_id"), case=row.get("case_id"))
-                st.switch_page("app_pages/trainer_cases.py")
-            if cols[1].button(
+            left, right = st.columns([3, 1], vertical_alignment="center")
+            left.markdown(
+                f"**{title}**  \n"
+                f":gray[{trainee_name} · Case {label}]"
+            )
+            if right.button(
                 "Jump to answer",
                 key=f"jump_q_{row['id']}",
                 width="stretch",
-                type="primary",
             ):
                 set_query(trainee=case.get("trainee_id"), case=row.get("case_id"))
                 st.session_state["focus_question_id"] = row["id"]
