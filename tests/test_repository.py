@@ -336,6 +336,114 @@ def test_add_correction_event_inserts_row() -> None:
     }
 
 
+class CrudQuery:
+    def __init__(self) -> None:
+        self.inserted: Any = None
+        self.updated: dict[str, Any] | None = None
+        self.deleted = False
+        self.filters: list[tuple[str, Any]] = []
+
+    def select(self, *_args: Any) -> "CrudQuery":
+        return self
+
+    def insert(self, payload: Any) -> "CrudQuery":
+        self.inserted = payload
+        return self
+
+    def update(self, payload: dict[str, Any]) -> "CrudQuery":
+        self.updated = payload
+        return self
+
+    def delete(self) -> "CrudQuery":
+        self.deleted = True
+        return self
+
+    def eq(self, column: str, value: Any) -> "CrudQuery":
+        self.filters.append((column, value))
+        return self
+
+    def order(self, *_args: Any, **_kwargs: Any) -> "CrudQuery":
+        return self
+
+    def execute(self) -> SimpleNamespace:
+        return SimpleNamespace(data=[{"id": "resource-1"}])
+
+
+class CrudClient:
+    def __init__(self) -> None:
+        self.query = CrudQuery()
+        self.table_name = ""
+
+    def table(self, name: str) -> CrudQuery:
+        self.table_name = name
+        return self.query
+
+
+def test_add_case_resource_inserts_row_and_returns_id() -> None:
+    client = CrudClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    resource_id = repository.add_case_resource(
+        case_id="case-1",
+        resource_type="link",
+        title="Getting started guide",
+        url="https://example.com/guide",
+    )
+
+    assert resource_id == "resource-1"
+    assert client.table_name == "case_resources"
+    assert client.query.inserted == {
+        "case_id": "case-1",
+        "resource_type": "link",
+        "title": "Getting started guide",
+        "url": "https://example.com/guide",
+        "body": None,
+        "created_by": "trainer",
+        "sort_order": 0,
+    }
+
+
+def test_update_case_resource_patches_only_given_fields() -> None:
+    client = CrudClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.update_case_resource("resource-1", title="New title")
+
+    assert client.query.updated == {"title": "New title"}
+    assert ("id", "resource-1") in client.query.filters
+
+
+def test_delete_case_resource_deletes_by_id() -> None:
+    client = CrudClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.delete_case_resource("resource-1")
+
+    assert client.query.deleted is True
+    assert ("id", "resource-1") in client.query.filters
+
+
+def test_list_case_resources_filters_by_case() -> None:
+    client = CrudClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    rows = repository.list_case_resources("case-1")
+
+    assert rows == [{"id": "resource-1"}]
+    assert ("case_id", "case-1") in client.query.filters
+
+
+def test_add_case_resources_bulk_skips_empty_list() -> None:
+    client = CrudClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.add_case_resources([])
+    assert client.query.inserted is None
+
+    repository.add_case_resources([{"case_id": "case-1"}])
+    assert client.query.inserted == [{"case_id": "case-1"}]
+
+
 def test_list_correction_threads_filters_and_sorts_events() -> None:
     data = [
         {

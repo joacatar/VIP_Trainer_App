@@ -41,6 +41,18 @@ class CorrectionEvent(TypedDict):
     created_at: str
 
 
+class CaseResource(TypedDict):
+    id: str
+    case_id: str
+    resource_type: Literal["file", "link", "note"]
+    title: str
+    url: str | None
+    body: str | None
+    created_by: Literal["system", "trainer"]
+    sort_order: int
+    created_at: str
+
+
 class HomeworkAssignment(TypedDict):
     id: str
     case_id: str

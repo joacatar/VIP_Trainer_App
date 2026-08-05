@@ -661,6 +661,87 @@ class TrainingRepository:
         ).execute()
         return int(result.data or 0)
 
+    def list_case_resources(self, case_id: str) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("case_resources")
+            .select(
+                "id, case_id, resource_type, title, url, body, created_by, "
+                "sort_order, created_at"
+            )
+            .eq("case_id", case_id)
+            .order("sort_order")
+            .execute()
+        )
+        return cast(list[dict[str, Any]], result.data or [])
+
+    def add_case_resource(
+        self,
+        *,
+        case_id: str,
+        resource_type: str,
+        title: str,
+        url: str | None = None,
+        body: str | None = None,
+        created_by: str = "trainer",
+        sort_order: int = 0,
+    ) -> str:
+        result = (
+            self._client.table("case_resources")
+            .insert(
+                {
+                    "case_id": case_id,
+                    "resource_type": resource_type,
+                    "title": title,
+                    "url": url,
+                    "body": body,
+                    "created_by": created_by,
+                    "sort_order": sort_order,
+                }
+            )
+            .execute()
+        )
+        rows = result.data or []
+        return cast(str, rows[0]["id"] if rows else "")
+
+    def add_case_resources(self, rows: list[dict[str, Any]]) -> None:
+        """Bulk insert (used when auto-populating suggested resources)."""
+        if rows:
+            self._client.table("case_resources").insert(rows).execute()
+
+    def update_case_resource(
+        self,
+        resource_id: str,
+        *,
+        title: str | None = None,
+        url: str | None = None,
+        body: str | None = None,
+        sort_order: int | None = None,
+    ) -> None:
+        patch: dict[str, Any] = {}
+        if title is not None:
+            patch["title"] = title
+        if url is not None:
+            patch["url"] = url
+        if body is not None:
+            patch["body"] = body
+        if sort_order is not None:
+            patch["sort_order"] = sort_order
+        if patch:
+            (
+                self._client.table("case_resources")
+                .update(patch)
+                .eq("id", resource_id)
+                .execute()
+            )
+
+    def delete_case_resource(self, resource_id: str) -> None:
+        (
+            self._client.table("case_resources")
+            .delete()
+            .eq("id", resource_id)
+            .execute()
+        )
+
     def get_case_owner_user_id(self, case_id: str) -> str | None:
         result = (
             self._client.table("cases")
