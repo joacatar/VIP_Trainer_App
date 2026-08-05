@@ -24,6 +24,7 @@ from ct_training_tracker.metrics import (
 )
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
+from ct_training_tracker.resource_rules import build_system_resources
 from ct_training_tracker.routing import query_value, set_query
 from ct_training_tracker.trainee_filters import (
     SHOW_TEST_TRAINEES_KEY,
@@ -263,7 +264,7 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
         return
 
     try:
-        repository.create_trainee(
+        trainee_id = repository.create_trainee(
             full_name=full_name.strip(),
             email=email.strip() or None,
             start_date=start_date,
@@ -274,6 +275,14 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
     except APIError as exc:
         st.error(f"Could not create trainee: {exc.message}")
         return
+
+    if trainee_id:
+        try:
+            repository.add_case_resources(
+                build_system_resources(repository.list_cases(trainee_id))
+            )
+        except APIError as exc:
+            st.warning(f"Trainee created, but seeding resources failed: {exc.message}")
 
     invalidate_trainer_cache()
     st.success("Trainee created with 32 scheduled cases and 96 file requirements.")

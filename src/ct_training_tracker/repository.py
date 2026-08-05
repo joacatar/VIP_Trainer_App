@@ -148,8 +148,8 @@ class TrainingRepository:
         timezone: str,
         created_by: str,
         is_test: bool = False,
-    ) -> None:
-        self._client.table("trainees").insert(
+    ) -> str | None:
+        result = self._client.table("trainees").insert(
             {
                 "full_name": full_name,
                 "email": email,
@@ -159,6 +159,8 @@ class TrainingRepository:
                 "is_test": is_test,
             }
         ).execute()
+        rows = result.data or []
+        return cast(str | None, rows[0]["id"] if rows else None)
 
     def assign_homework(
         self,
