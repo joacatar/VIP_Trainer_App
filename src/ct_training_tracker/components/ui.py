@@ -8,7 +8,11 @@ from typing import Any, Literal
 
 import streamlit as st
 
-from ct_training_tracker.case_labels import case_title
+from ct_training_tracker.case_labels import (
+    case_catalog_label,
+    case_order_number,
+    case_title,
+)
 
 StatusColor = Literal[
     "red", "orange", "yellow", "blue", "green", "violet", "gray", "grey", "primary"
@@ -97,3 +101,27 @@ def render_case_header(
             _body()
     else:
         _body()
+
+
+def render_compact_review_header(case: dict[str, Any]) -> None:
+    """Single-row Review header: trainee · set/case/order/due · status."""
+    status = str(case.get("raw_status") or case.get("status") or "not_started")
+    status_label = str(case.get("status") or status.replace("_", " ").title())
+    trainee = str(case.get("trainee_name") or "Trainee").upper()
+    due = case.get("due_date") or case.get("schedule_due_date") or "—"
+    order = case_order_number(case)
+    bits = [
+        f"Set {case.get('set_no')}",
+        f"Case {case_catalog_label(case)}",
+    ]
+    if order:
+        bits.append(order)
+    bits.append(f"Due {due}")
+    meta = " · ".join(bits)
+
+    left, right = st.columns([5, 1], vertical_alignment="center")
+    with left:
+        st.markdown(f"**{trainee}**  \n:gray[{meta}]")
+    with right:
+        st.badge(status_label, color=status_color(status))
+    st.divider()

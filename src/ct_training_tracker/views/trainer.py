@@ -8,6 +8,7 @@ from ct_training_tracker.case_labels import case_title
 from ct_training_tracker.components.ui import (
     constrained_width,
     render_case_header,
+    render_compact_review_header,
     render_empty_state,
     render_page_header,
 )
@@ -17,14 +18,25 @@ from ct_training_tracker.data_cache import (
     cached_trainee_cases,
     invalidate_trainer_cache,
 )
-from ct_training_tracker.metrics import summarize_progress, waiting_label
+from ct_training_tracker.metrics import (
+    case_attention_state,
+    count_file_waiting,
+    waiting_label,
+)
 from ct_training_tracker.models import Profile
 from ct_training_tracker.repository import TrainingRepository
+from ct_training_tracker.resource_rules import build_system_resources
 from ct_training_tracker.routing import query_value, set_query
 from ct_training_tracker.trainee_filters import (
     SHOW_TEST_TRAINEES_KEY,
     filter_trainees,
     trainee_display_name,
+)
+from ct_training_tracker.views.bulk_due_dates import (
+    clear_selection_if_leaving_cases,
+    render_bulk_due_date_panel,
+    render_selection_controls,
+    selected_case_ids,
 )
 from ct_training_tracker.views.case_board import (
     enrich_cases,
@@ -32,15 +44,18 @@ from ct_training_tracker.views.case_board import (
     select_case_from_list,
 )
 from ct_training_tracker.views.case_files import render_trainer_case_review
+from ct_training_tracker.views.kanban import collect_board_cards, render_case_board
 from ct_training_tracker.views.metrics import render_training_analytics
 from ct_training_tracker.views.questions import (
     render_trainer_case_questions,
     render_trainer_question_inbox,
 )
+from ct_training_tracker.views.resources import render_case_resources_editor
 from ct_training_tracker.views.revisions import render_trainer_revisions
 
 
 def render_dashboard(repository: TrainingRepository) -> None:
+    clear_selection_if_leaving_cases()
     render_page_header(
         "Training overview",
         "Start with what needs you, then scan trainee progress.",
@@ -67,85 +82,122 @@ def render_dashboard(repository: TrainingRepository) -> None:
             )
         return
 
-    totals = summarize_progress(rows)
+    # Same source of truth as the Cases page filters: case_attention_state
+    # over each trainee's (cached) case list, so counts can never disagree.
+    counts_by_trainee = {
+        str(row["trainee_id"]): _trainee_attention_counts(
+            repository, str(row["trainee_id"])
+        )
+        for row in rows
+    }
+    need_review = sum(c["in_review"] for c in counts_by_trainee.values())
+    overdue_total = sum(c["overdue"] for c in counts_by_trainee.values())
+    to_send_total = sum(c["to_send"] for c in counts_by_trainee.values())
+    approved_total = sum(c["approved"] for c in counts_by_trainee.values())
+    cases_total = sum(c["total"] for c in counts_by_trainee.values())
     open_questions = repository.count_open_questions()
 
-    with st.container(horizontal=True, gap="small"):
-        st.metric(
-            "Needs review",
-            totals.waiting_on_trainer,
-            help="Packages waiting for your revision or send-back.",
-            border=True,
-        )
-        st.metric(
-            "Overdue",
-            totals.overdue_cases,
-            help="Cases past due that are not approved yet.",
-            border=True,
-        )
-        st.metric(
-            "Awaiting trainee",
-            totals.waiting_on_trainee,
-            help="File slots trainees still need to prepare or replace.",
-            border=True,
-        )
-        st.metric(
-            "Open questions",
-            open_questions,
-            help="Trainee questions waiting for your answer.",
-            border=True,
-        )
+    question_word = "open question" if open_questions == 1 else "open questions"
+    st.markdown(
+        f":blue[**{need_review}** need review] · "
+        f":red[**{overdue_total}** overdue] · "
+        f":gray[**{to_send_total}** awaiting trainee] · "
+        f":orange[**{open_questions}** {question_word}]"
+    )
+    done_ratio = approved_total / cases_total if cases_total else 0.0
+    bar_col, caption_col = st.columns([4, 1], vertical_alignment="center")
+    bar_col.progress(done_ratio)
+    caption_col.caption(f"{approved_total} of {cases_total} approved")
 
-    with st.container(border=True):
-        done_ratio = (
-            totals.approved_cases / totals.total_cases if totals.total_cases else 0.0
-        )
-        st.markdown("**Overall completion**")
-        st.caption(
-            f"{totals.approved_cases} of {totals.total_cases} cases approved "
-            f"across {totals.trainees} trainees."
-        )
-        st.progress(done_ratio)
+    attention_tab, analytics_tab = st.tabs(
+        ["Needs attention", "Performance & forecast"],
+        key="dashboard_tabs",
+        on_change="rerun",
+    )
+    if attention_tab.open:
+        with attention_tab:
+            _render_attention_feed(repository, rows, counts_by_trainee)
+    if analytics_tab.open:
+        with analytics_tab:
+            _render_all_trainees_table(rows)
+            render_training_analytics(repository, include_test=include_test)
+
+
+def _trainee_attention_counts(
+    repository: TrainingRepository,
+    trainee_id: str,
+) -> dict[str, int]:
+    """Per-trainee actionable counts from case_attention_state."""
+    cases = cached_trainee_cases(repository, trainee_id, include_files=True)
+    today = dt.date.today()
+    in_review = 0
+    overdue = 0
+    approved = 0
+    for case in cases:
+        attention = case_attention_state(case, [], [], [], today)
+        if attention.state == "needs_trainer":
+            in_review += 1
+        if attention.overdue:
+            overdue += 1
+        if attention.state == "approved":
+            approved += 1
+    return {
+        "in_review": in_review,
+        "overdue": overdue,
+        "to_send": count_file_waiting(cases).to_send,
+        "approved": approved,
+        "total": len(cases),
+    }
+
+
+def _render_attention_feed(
+    repository: TrainingRepository,
+    rows: list[dict],
+    counts_by_trainee: dict[str, dict[str, int]],
+) -> None:
+    """One card per trainee with actionable chips, then the open questions."""
+    for row in sorted(
+        rows,
+        key=lambda item: (
+            -counts_by_trainee[str(item["trainee_id"])]["in_review"],
+            -counts_by_trainee[str(item["trainee_id"])]["overdue"],
+            -counts_by_trainee[str(item["trainee_id"])]["to_send"],
+        ),
+    ):
+        counts = counts_by_trainee[str(row["trainee_id"])]
+        in_review = counts["in_review"]
+        overdue = counts["overdue"]
+        to_send = counts["to_send"]
+        chips: list[str] = []
+        if in_review:
+            chips.append(f":blue-badge[{in_review} in review]")
+        if overdue:
+            chips.append(f":red-badge[{overdue} overdue]")
+        if to_send:
+            chips.append(f":gray-badge[{to_send} files to send]")
+        with st.container(border=True):
+            left, right = st.columns([3, 1], vertical_alignment="center")
+            with left:
+                st.markdown(f"**{trainee_display_name(row)}**")
+                st.markdown(
+                    " ".join(chips) if chips else ":green-badge[All clear]"
+                )
+            if right.button(
+                "Open cases",
+                key=f"open_cases_{row['trainee_id']}",
+                type="primary",
+                width="stretch",
+                icon=":material/arrow_forward:",
+            ):
+                st.switch_page(
+                    "app_pages/trainer_cases.py",
+                    query_params={"trainee": row["trainee_id"]},
+                )
 
     render_trainer_question_inbox(repository)
 
-    attention = [
-        row
-        for row in rows
-        if int(row.get("waiting_on_trainer", 0))
-        or int(row.get("waiting_on_trainee", 0))
-        or int(row.get("overdue_cases", 0))
-    ]
-    st.subheader("Needs attention")
-    if not attention:
-        st.success("Nothing waiting right now.")
-    else:
-        for row in sorted(
-            attention,
-            key=lambda item: (
-                -int(item.get("waiting_on_trainer", 0)),
-                -int(item.get("overdue_cases", 0)),
-                -int(item.get("waiting_on_trainee", 0)),
-            ),
-        ):
-            with st.container(border=True):
-                left, right = st.columns([3, 1], vertical_alignment="center")
-                left.markdown(
-                    f"**{trainee_display_name(row)}**  \n"
-                    f"{waiting_label(row)}"
-                )
-                if right.button(
-                    "Open cases",
-                    key=f"open_cases_{row['trainee_id']}",
-                    type="primary",
-                    width="stretch",
-                    icon=":material/arrow_forward:",
-                ):
-                    st.switch_page(
-                        "app_pages/trainer_cases.py",
-                        query_params={"trainee": row["trainee_id"]},
-                    )
 
+def _render_all_trainees_table(rows: list[dict]) -> None:
     frame = pd.DataFrame(rows)
     frame["display_name"] = frame.apply(trainee_display_name, axis=1)
     frame["case_progress"] = (
@@ -186,10 +238,9 @@ def render_dashboard(repository: TrainingRepository) -> None:
             width="stretch",
         )
 
-    render_training_analytics(repository, include_test=include_test)
-
 
 def render_trainees(repository: TrainingRepository, user_id: str) -> None:
+    clear_selection_if_leaving_cases()
     render_page_header(
         "Add trainee",
         "Create a trainee profile and generate their scheduled training cases.",
@@ -224,7 +275,7 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
         return
 
     try:
-        repository.create_trainee(
+        trainee_id = repository.create_trainee(
             full_name=full_name.strip(),
             email=email.strip() or None,
             start_date=start_date,
@@ -235,6 +286,14 @@ def render_trainees(repository: TrainingRepository, user_id: str) -> None:
     except APIError as exc:
         st.error(f"Could not create trainee: {exc.message}")
         return
+
+    if trainee_id:
+        try:
+            repository.add_case_resources(
+                build_system_resources(repository.list_cases(trainee_id))
+            )
+        except APIError as exc:
+            st.warning(f"Trainee created, but seeding resources failed: {exc.message}")
 
     invalidate_trainer_cache()
     st.success("Trainee created with 32 scheduled cases and 96 file requirements.")
@@ -299,13 +358,17 @@ def _assign_case(
 
 def render_cases(repository: TrainingRepository, user_id: str) -> None:
     del user_id
-    header_col, refresh_col = st.columns([5, 1], vertical_alignment="bottom")
+    header_col, select_col, refresh_col = st.columns(
+        [4, 1, 1], vertical_alignment="bottom"
+    )
     with header_col:
         render_page_header(
             "Cases",
-            "Assign homework from the inbox. Open Review only when a "
-            "package is ready.",
+            "Board is the scan view. Inbox is for assigning homework and "
+            "per-trainee detail.",
         )
+    with select_col:
+        render_selection_controls()
     with refresh_col:
         if st.button(
             "Refresh",
@@ -335,6 +398,69 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
             )
         return
 
+    selected_ids = selected_case_ids()
+    if selected_ids:
+        # Lookup covers every visible trainee so cross-trainee selection works.
+        board_cards = collect_board_cards(repository, trainees)
+        cases_by_id = {
+            card.case_id: {
+                "id": card.case_id,
+                "trainee_id": card.trainee_id,
+                "trainee_name": card.trainee_name,
+                "set_no": card.set_no,
+                "catalog_label": card.case_label.removeprefix("Case "),
+                "due_date": card.due_date,
+                "schedule_due_date": card.due_date,
+            }
+            for card in board_cards
+        }
+        render_bulk_due_date_panel(repository, cases_by_id)
+
+    requested_view = query_value("view") or "board"
+    board_label = ":material/view_column: Board"
+    inbox_label = ":material/inbox: Inbox"
+    default_tab = inbox_label if requested_view == "inbox" else board_label
+    board_tab, inbox_tab = st.tabs(
+        [board_label, inbox_label],
+        key="cases_view_tabs",
+        on_change="rerun",
+        default=default_tab,
+    )
+
+    if board_tab.open:
+        with board_tab:
+            labels = {row["id"]: trainee_display_name(row) for row in trainees}
+            requested_trainee = query_value("trainee")
+            options = ["__all__", *labels]
+            default_index = 0
+            if requested_trainee in labels:
+                default_index = options.index(requested_trainee)
+            filter_id = st.selectbox(
+                "Trainee filter",
+                options=options,
+                index=default_index,
+                format_func=lambda value: (
+                    "All trainees" if value == "__all__" else labels[value]
+                ),
+                key="board_trainee_filter",
+            )
+            render_case_board(
+                repository,
+                trainees,
+                trainee_filter_id=(
+                    None if filter_id == "__all__" else str(filter_id)
+                ),
+            )
+
+    if inbox_tab.open:
+        with inbox_tab:
+            _render_cases_inbox(repository, trainees)
+
+
+def _render_cases_inbox(
+    repository: TrainingRepository,
+    trainees: list[dict],
+) -> None:
     labels = {row["id"]: trainee_display_name(row) for row in trainees}
     trainee_ids = list(labels)
     requested_trainee = query_value("trainee")
@@ -348,9 +474,10 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
             options=trainee_ids,
             index=trainee_index,
             format_func=lambda value: labels[value],
+            key="inbox_trainee_select",
         )
     if trainee_id != requested_trainee:
-        set_query(trainee=trainee_id, case=None)
+        set_query(trainee=trainee_id, case=None, view="inbox")
         st.rerun()
 
     cases = cached_trainee_cases(repository, trainee_id, include_files=True)
@@ -380,6 +507,7 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
             return
 
         render_case_summary(selected)
+        render_case_resources_editor(repository, case_id=str(selected["id"]))
         raw = str(selected.get("raw_status") or "")
         if raw == "not_started":
             st.caption("This case still needs homework assignment.")
@@ -415,6 +543,7 @@ def render_trainer_case_workspace(
     user_id: str,
 ) -> None:
     """Deep review surface — not used for homework assignment."""
+    clear_selection_if_leaving_cases()
     trainee_id = query_value("trainee")
     case_id = query_value("case")
     if not trainee_id or not case_id:
@@ -454,20 +583,21 @@ def render_trainer_case_workspace(
             )
         return
 
-    back, heading = st.columns([1, 5], vertical_alignment="center")
+    back, heading = st.columns([1, 8], vertical_alignment="center")
     with back:
-        if st.button("Back", icon=":material/arrow_back:"):
+        if st.button(
+            "",
+            icon=":material/arrow_back:",
+            key=f"review_back_{case_id}",
+            help="Back to Cases",
+        ):
             st.switch_page(
                 "app_pages/trainer_cases.py",
                 query_params={"trainee": trainee_id, "case": case_id},
             )
     with heading:
-        render_page_header(
-            "Review",
-            "Inspect files, leave corrections, answer questions, then publish.",
-        )
+        render_compact_review_header(selected)
 
-    render_case_summary(selected)
     files_tab, review_tab, questions_tab = st.tabs(
         [
             ":material/folder: Files",
@@ -476,6 +606,7 @@ def render_trainer_case_workspace(
         ],
         key=f"trainer_review_tabs_{case_id}",
         on_change="rerun",
+        default=":material/rate_review: Feedback",
     )
     if files_tab.open:
         with files_tab:

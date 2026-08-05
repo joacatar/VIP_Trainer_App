@@ -148,8 +148,8 @@ class TrainingRepository:
         timezone: str,
         created_by: str,
         is_test: bool = False,
-    ) -> None:
-        self._client.table("trainees").insert(
+    ) -> str | None:
+        result = self._client.table("trainees").insert(
             {
                 "full_name": full_name,
                 "email": email,
@@ -159,6 +159,8 @@ class TrainingRepository:
                 "is_test": is_test,
             }
         ).execute()
+        rows = result.data or []
+        return cast(str | None, rows[0]["id"] if rows else None)
 
     def assign_homework(
         self,
@@ -180,6 +182,35 @@ class TrainingRepository:
             },
         ).execute()
         return cast(str, result.data)
+
+    def bulk_update_due_dates(
+        self,
+        updates: list[tuple[str, dt.date]],
+    ) -> list[str]:
+        """Update due dates for many cases. Returns case ids that failed.
+
+        Non-atomic on purpose — successes stick; callers can re-run failures.
+        Updates both cases.due_date and any matching homework_assignments row.
+        """
+        failed: list[str] = []
+        for case_id, due_date in updates:
+            iso = due_date.isoformat()
+            try:
+                (
+                    self._client.table("cases")
+                    .update({"due_date": iso})
+                    .eq("id", case_id)
+                    .execute()
+                )
+                (
+                    self._client.table("homework_assignments")
+                    .update({"due_date": iso})
+                    .eq("case_id", case_id)
+                    .execute()
+                )
+            except Exception:
+                failed.append(case_id)
+        return failed
 
     def list_homework_for_cases(
         self,
@@ -556,6 +587,223 @@ class TrainingRepository:
             },
         ).execute()
 
+    def list_correction_threads(
+        self,
+        case_id: str,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        query = (
+            self._client.table("corrections_threads")
+            .select(
+                "id, case_id, section, status, related_file, created_at, "
+                "resolved_at, resolved_in_revision_id, "
+                "correction_events(id, revision_id, event_type, body, created_at), "
+                "correction_thread_screenshots("
+                "id, storage_path, original_filename, mime_type, size_bytes, "
+                "created_at"
+                ")"
+            )
+            .eq("case_id", case_id)
+            .order("created_at")
+        )
+        if status is not None:
+            query = query.eq("status", status)
+        result = query.execute()
+        return self._hydrate_correction_threads(
+            cast(list[dict[str, Any]], result.data or [])
+        )
+
+    def list_all_correction_threads(
+        self,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """All correction threads (trainer analytics)."""
+        query = (
+            self._client.table("corrections_threads")
+            .select(
+                "id, case_id, section, status, related_file, created_at, "
+                "resolved_at, resolved_in_revision_id, "
+                "correction_events(id, revision_id, event_type, body, created_at)"
+            )
+            .order("created_at")
+        )
+        if status is not None:
+            query = query.eq("status", status)
+        result = query.execute()
+        return self._hydrate_correction_threads(
+            cast(list[dict[str, Any]], result.data or [])
+        )
+
+    @staticmethod
+    def _hydrate_correction_threads(
+        rows: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        for thread in rows:
+            thread["correction_events"] = sorted(
+                thread.get("correction_events") or [],
+                key=lambda event: str(event.get("created_at") or ""),
+            )
+            if "correction_thread_screenshots" in thread:
+                thread["correction_thread_screenshots"] = sorted(
+                    thread.get("correction_thread_screenshots") or [],
+                    key=lambda shot: str(shot.get("created_at") or ""),
+                )
+        return rows
+
+    def create_correction_thread(
+        self,
+        *,
+        case_id: str,
+        section: str,
+        body: str,
+        revision_id: str | None,
+        related_file: str | None = None,
+    ) -> str:
+        """Create the thread and its first 'raised' event in one operation."""
+        result = self._client.rpc(
+            "create_correction_thread",
+            {
+                "target_case_id": case_id,
+                "target_section": section,
+                "thread_body": body,
+                "target_revision_id": revision_id,
+                "target_related_file": related_file,
+            },
+        ).execute()
+        return cast(str, result.data)
+
+    def add_correction_event(
+        self,
+        *,
+        thread_id: str,
+        revision_id: str | None,
+        event_type: str,
+        body: str | None = None,
+    ) -> None:
+        self._client.table("correction_events").insert(
+            {
+                "thread_id": thread_id,
+                "revision_id": revision_id,
+                "event_type": event_type,
+                "body": body,
+            }
+        ).execute()
+
+    def resolve_thread(self, thread_id: str, revision_id: str | None) -> None:
+        self._client.rpc(
+            "resolve_correction_thread",
+            {
+                "target_thread_id": thread_id,
+                "target_revision_id": revision_id,
+            },
+        ).execute()
+
+    def reopen_thread(self, thread_id: str, revision_id: str | None) -> None:
+        self._client.rpc(
+            "reopen_correction_thread",
+            {
+                "target_thread_id": thread_id,
+                "target_revision_id": revision_id,
+            },
+        ).execute()
+
+    def mark_open_threads_still_open(
+        self,
+        *,
+        case_id: str,
+        revision_id: str,
+    ) -> int:
+        """Stamp every open thread with a 'still_open' event on a revision."""
+        result = self._client.rpc(
+            "mark_open_threads_still_open",
+            {
+                "target_case_id": case_id,
+                "target_revision_id": revision_id,
+            },
+        ).execute()
+        return int(result.data or 0)
+
+    def list_case_resources(self, case_id: str) -> list[dict[str, Any]]:
+        result = (
+            self._client.table("case_resources")
+            .select(
+                "id, case_id, resource_type, title, url, body, created_by, "
+                "sort_order, created_at"
+            )
+            .eq("case_id", case_id)
+            .order("sort_order")
+            .execute()
+        )
+        return cast(list[dict[str, Any]], result.data or [])
+
+    def add_case_resource(
+        self,
+        *,
+        case_id: str,
+        resource_type: str,
+        title: str,
+        url: str | None = None,
+        body: str | None = None,
+        created_by: str = "trainer",
+        sort_order: int = 0,
+    ) -> str:
+        result = (
+            self._client.table("case_resources")
+            .insert(
+                {
+                    "case_id": case_id,
+                    "resource_type": resource_type,
+                    "title": title,
+                    "url": url,
+                    "body": body,
+                    "created_by": created_by,
+                    "sort_order": sort_order,
+                }
+            )
+            .execute()
+        )
+        rows = result.data or []
+        return cast(str, rows[0]["id"] if rows else "")
+
+    def add_case_resources(self, rows: list[dict[str, Any]]) -> None:
+        """Bulk insert (used when auto-populating suggested resources)."""
+        if rows:
+            self._client.table("case_resources").insert(rows).execute()
+
+    def update_case_resource(
+        self,
+        resource_id: str,
+        *,
+        title: str | None = None,
+        url: str | None = None,
+        body: str | None = None,
+        sort_order: int | None = None,
+    ) -> None:
+        patch: dict[str, Any] = {}
+        if title is not None:
+            patch["title"] = title
+        if url is not None:
+            patch["url"] = url
+        if body is not None:
+            patch["body"] = body
+        if sort_order is not None:
+            patch["sort_order"] = sort_order
+        if patch:
+            (
+                self._client.table("case_resources")
+                .update(patch)
+                .eq("id", resource_id)
+                .execute()
+            )
+
+    def delete_case_resource(self, resource_id: str) -> None:
+        (
+            self._client.table("case_resources")
+            .delete()
+            .eq("id", resource_id)
+            .execute()
+        )
+
     def get_case_owner_user_id(self, case_id: str) -> str | None:
         result = (
             self._client.table("cases")
@@ -617,6 +865,52 @@ class TrainingRepository:
                 .insert(
                     {
                         "correction_id": correction_id,
+                        "storage_path": object_path,
+                        "original_filename": object_path.rsplit("/", 1)[-1],
+                        "mime_type": mime_type,
+                        "size_bytes": len(content),
+                        "uploaded_by": user_id,
+                    }
+                )
+                .execute()
+            )
+        except Exception:
+            self._client.storage.from_(CASE_FILES_BUCKET).remove([object_path])
+            raise
+        rows = result.data or []
+        return cast(str, rows[0]["id"] if rows else "")
+
+    def upload_thread_screenshot(
+        self,
+        *,
+        user_id: str,
+        case_id: str,
+        thread_id: str,
+        filename: str,
+        content: bytes,
+        mime_type: str | None,
+    ) -> str:
+        owner_user_id = self.get_case_owner_user_id(case_id) or user_id
+        object_path = screenshot_storage_path(
+            owner_user_id=owner_user_id,
+            case_id=case_id,
+            correction_id=thread_id,
+            filename=filename,
+        )
+        self._client.storage.from_(CASE_FILES_BUCKET).upload(
+            object_path,
+            content,
+            file_options={
+                "content-type": mime_type or "application/octet-stream",
+                "upsert": "false",
+            },
+        )
+        try:
+            result = (
+                self._client.table("correction_thread_screenshots")
+                .insert(
+                    {
+                        "thread_id": thread_id,
                         "storage_path": object_path,
                         "original_filename": object_path.rsplit("/", 1)[-1],
                         "mime_type": mime_type,
