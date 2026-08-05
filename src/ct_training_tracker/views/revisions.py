@@ -196,7 +196,7 @@ def _render_publish_action_bar(
                         file_decisions=decisions,
                         approve_package=False,
                     )
-                    if revision_id is not None and open_threads:
+                    if is_draft and revision_id is not None and open_threads:
                         repository.mark_open_threads_still_open(
                             case_id=case["id"],
                             revision_id=revision_id,
