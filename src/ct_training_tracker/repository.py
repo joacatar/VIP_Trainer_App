@@ -99,12 +99,14 @@ class TrainingRepository:
     def _case_columns(self, *, include_files: bool) -> str:
         if include_files:
             return (
-                "id, set_no, case_no, catalog_label, order_number, status, "
+                "id, set_no, case_no, catalog_label, order_number, "
+                "journey_category, status, "
                 "schedule_due_date, due_date, estimated_completion_date, "
                 "file_requirements(kind, status)"
             )
         return (
-            "id, set_no, case_no, catalog_label, order_number, phase, "
+            "id, set_no, case_no, catalog_label, order_number, "
+            "journey_category, phase, "
             "status, schedule_due_date, due_date, estimated_completion_date"
         )
 
