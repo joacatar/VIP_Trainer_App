@@ -244,7 +244,12 @@ def render_trainee_portal(
             "check Questions when you have a moment."
         )
 
-    cases = repository.list_cases(trainee["id"], include_files=True)
+    # released_only=True: a trainee must never see a phase-2 case before its
+    # release day, even though phase-1 cases (released the day they're
+    # created) are unaffected by the filter.
+    cases = repository.list_cases(
+        trainee["id"], include_files=True, released_only=True
+    )
     assignments = repository.list_homework_for_cases(
         [row["id"] for row in cases]
     )
@@ -269,8 +274,13 @@ def render_trainee_portal(
         str(case["id"]): repository.list_correction_threads(str(case["id"]))
         for case in cases
     }
+    # The journey visual is a phase-1 set map (Set 1/2 x cases 1-16); phase-2
+    # live cases have no sets and are intentionally left off it.
+    phase_1_cases = [
+        case for case in cases if int(case.get("phase_no") or 1) == 1
+    ]
     render_progress_journey(
-        cases,
+        phase_1_cases,
         today=today,
         threads_by_case=threads_by_case,
         next_up_case_id=(
@@ -319,6 +329,19 @@ def render_trainee_case_workspace(
     case = repository.get_case(case_id, include_files=True)
     if case is None:
         st.error("This case is unavailable or the link is no longer valid.")
+        if st.button("Back to my cases", icon=":material/arrow_back:"):
+            st.switch_page("app_pages/trainee_cases.py")
+        return
+
+    # A trainee must never open a phase-2 case before its release day, even
+    # via a stale link or a typed URL — released_only only guards the list.
+    released_on = case.get("released_on")
+    if released_on and str(released_on) > dt.date.today().isoformat():
+        render_empty_state(
+            "This case is not released yet.",
+            detail=f"It unlocks on {released_on}.",
+            icon=":material/lock_clock:",
+        )
         if st.button("Back to my cases", icon=":material/arrow_back:"):
             st.switch_page("app_pages/trainee_cases.py")
         return

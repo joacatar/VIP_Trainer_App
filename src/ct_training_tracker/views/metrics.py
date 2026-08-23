@@ -9,7 +9,11 @@ import pandas as pd
 import streamlit as st
 
 from ct_training_tracker.analytics import format_rate
-from ct_training_tracker.case_labels import case_catalog_label, case_label
+from ct_training_tracker.case_labels import (
+    case_catalog_label,
+    case_label,
+    case_phase_no,
+)
 from ct_training_tracker.metrics import (
     avg_days_per_case_by_trainee,
     est_completion_by_trainee,
@@ -97,7 +101,7 @@ def render_training_analytics(
     case_label_by_id = {
         str(row.get("id") or ""): (
             f"Set {row.get('set_no')} · Case {case_catalog_label(row)}"
-            if row.get("set_no")
+            if row.get("set_no") and case_phase_no(row) == 1
             else case_label(row)
         )
         for row in cases

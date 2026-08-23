@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from statistics import mean
 from typing import Any, Literal
 
-from ct_training_tracker.case_labels import case_catalog_label
+from ct_training_tracker.case_labels import case_catalog_label, case_phase_no
 from ct_training_tracker.revisions import REVIEW_SECTIONS
 
 CaseOwner = Literal["trainee", "trainer", "none"]
@@ -292,6 +292,7 @@ class BoardCard:
     trainee_id: str
     trainee_name: str
     case_label: str
+    phase_no: int
     set_no: int
     state: AttentionState
     due_date: str | None
@@ -381,9 +382,13 @@ def build_board_card(
         open_question_count=open_q,
         revision_sent_at=revision_sent,
     )
-    label = f"Case {case_catalog_label(case)}"
+    # Deliberately the catalog label only (no VIP order number) — kanban
+    # cards are compact tiles in a 4-column board and stay terse.
+    prefix = "Live case" if case_phase_no(case) == 2 else "Case"
+    label = f"{prefix} {case_catalog_label(case)}"
     return BoardCard(
         case_id=str(case["id"]),
+        phase_no=int(case.get("phase_no") or 1),
         trainee_id=str(case.get("trainee_id") or ""),
         trainee_name=trainee_name,
         case_label=label,

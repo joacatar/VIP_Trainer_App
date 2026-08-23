@@ -408,7 +408,9 @@ def render_cases(repository: TrainingRepository, user_id: str) -> None:
                 "trainee_id": card.trainee_id,
                 "trainee_name": card.trainee_name,
                 "set_no": card.set_no,
-                "catalog_label": card.case_label.removeprefix("Case "),
+                "catalog_label": card.case_label.removeprefix(
+                    "Live case " if card.phase_no == 2 else "Case "
+                ),
                 "due_date": card.due_date,
                 "schedule_due_date": card.due_date,
             }
@@ -485,16 +487,32 @@ def _render_cases_inbox(
         repository, [row["id"] for row in cases]
     )
     frame = enrich_cases(cases, assignments, role="trainer")
+    has_phase_2 = bool(len(frame) and (frame["phase_no"] == 2).any())
 
     list_col, preview_col = st.columns([1.05, 1.2], gap="large")
     with list_col:
         st.subheader("Case inbox")
+        inbox_phase = 1
+        if has_phase_2:
+            inbox_phase = st.segmented_control(
+                "Phase",
+                options=[1, 2],
+                format_func=lambda value: (
+                    "Phase 1" if value == 1 else "Live cases"
+                ),
+                default=1,
+                key="trainer_inbox_phase",
+                label_visibility="collapsed",
+            )
+            if inbox_phase is None:
+                inbox_phase = 1
         selected = select_case_from_list(
             frame,
             key_prefix="trainer",
             role="trainer",
             trainee_id=trainee_id,
             default_filter="needs_you",
+            phase_no=inbox_phase,
         )
     with preview_col:
         st.subheader("Quick view")

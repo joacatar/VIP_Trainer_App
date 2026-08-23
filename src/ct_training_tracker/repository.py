@@ -69,7 +69,10 @@ class TrainingRepository:
     def list_active_trainees(self) -> list[Trainee]:
         result = (
             self._client.table("trainees")
-            .select("id, full_name, start_date, current_phase, is_test")
+            .select(
+                "id, full_name, start_date, current_phase, is_test, "
+                "phase_2_started_on"
+            )
             .eq("active", True)
             .order("full_name")
             .execute()
@@ -79,7 +82,10 @@ class TrainingRepository:
     def get_trainee_for_user(self, user_id: str) -> Trainee | None:
         result = (
             self._client.table("trainees")
-            .select("id, full_name, current_phase, start_date, is_test")
+            .select(
+                "id, full_name, current_phase, start_date, is_test, "
+                "phase_2_started_on"
+            )
             .eq("auth_user_id", user_id)
             .maybe_single()
             .execute()
@@ -89,24 +95,39 @@ class TrainingRepository:
     def get_trainee(self, trainee_id: str) -> Trainee | None:
         result = (
             self._client.table("trainees")
-            .select("id, full_name, current_phase, start_date, is_test")
+            .select(
+                "id, full_name, current_phase, start_date, is_test, "
+                "phase_2_started_on"
+            )
             .eq("id", trainee_id)
             .maybe_single()
             .execute()
         )
         return cast(Trainee | None, result.data if result is not None else None)
 
-    def _case_columns(self, *, include_files: bool) -> str:
+    def _case_columns(
+        self,
+        *,
+        include_files: bool,
+        include_source: bool = False,
+    ) -> str:
+        """Columns for a case row.
+
+        `source_order_number` is the production case a phase-2 live case
+        mirrors. It is trainer reference data — trainees see nothing beyond
+        their assigned case — so it is opt-in rather than always selected.
+        """
+        source = "source_order_number, " if include_source else ""
         if include_files:
             return (
-                "id, set_no, case_no, catalog_label, order_number, "
-                "journey_category, status, "
+                "id, phase_no, set_no, case_no, catalog_label, order_number, "
+                f"{source}journey_category, instruction, status, released_on, "
                 "schedule_due_date, due_date, estimated_completion_date, "
                 "file_requirements(kind, status)"
             )
         return (
-            "id, set_no, case_no, catalog_label, order_number, "
-            "journey_category, phase, "
+            "id, phase_no, set_no, case_no, catalog_label, order_number, "
+            f"{source}journey_category, instruction, phase, released_on, "
             "status, schedule_due_date, due_date, estimated_completion_date"
         )
 
@@ -115,14 +136,34 @@ class TrainingRepository:
         trainee_id: str,
         *,
         include_files: bool = False,
+        include_source: bool = False,
+        phase_no: int | None = None,
+        released_only: bool = False,
     ) -> list[dict[str, Any]]:
-        result = (
+        """Cases for one trainee.
+
+        `phase_no` limits the result to phase 1 (catalog) or phase 2 (simulated
+        live cases). `released_only` hides phase-2 cases whose release day has
+        not arrived yet; trainee-facing views pass it, trainer views do not.
+        `include_source` adds the mirrored production order number and must
+        stay off for anything a trainee can see.
+        """
+        query = (
             self._client.table("cases")
-            .select(self._case_columns(include_files=include_files))
+            .select(
+                self._case_columns(
+                    include_files=include_files,
+                    include_source=include_source,
+                )
+            )
             .eq("trainee_id", trainee_id)
-            .order("set_no")
-            .order("case_no")
-            .execute()
+        )
+        if phase_no is not None:
+            query = query.eq("phase_no", phase_no)
+        if released_only:
+            query = query.lte("released_on", dt.date.today().isoformat())
+        result = (
+            query.order("phase_no").order("set_no").order("case_no").execute()
         )
         return cast(list[dict[str, Any]], result.data or [])
 
@@ -131,10 +172,16 @@ class TrainingRepository:
         case_id: str,
         *,
         include_files: bool = False,
+        include_source: bool = False,
     ) -> dict[str, Any] | None:
         result = (
             self._client.table("cases")
-            .select(self._case_columns(include_files=include_files))
+            .select(
+                self._case_columns(
+                    include_files=include_files,
+                    include_source=include_source,
+                )
+            )
             .eq("id", case_id)
             .maybe_single()
             .execute()
