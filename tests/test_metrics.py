@@ -338,3 +338,44 @@ def test_count_tasks_separates_open_and_with_trainer() -> None:
         approved=1,
         overdue=1,
     )
+
+
+def test_build_board_card_labels_a_live_case_without_the_order_number() -> None:
+    card = build_board_card(
+        {
+            "id": "c-l06",
+            "trainee_id": "t1",
+            "phase_no": 2,
+            "set_no": 1,
+            "case_no": 6,
+            "catalog_label": "L06",
+            "order_number": "12-26-07-0005",
+            "status": "assigned",
+            "due_date": "2026-09-02",
+        },
+        trainee_name="Aaron Fong",
+        today=TODAY,
+    )
+
+    assert card.phase_no == 2
+    # Kanban cards stay terse: catalog label only, no VIP order number.
+    assert card.case_label == "Live case L06"
+
+
+def test_build_board_card_defaults_to_phase_1() -> None:
+    card = build_board_card(
+        {
+            "id": "c1",
+            "trainee_id": "t1",
+            "status": "assigned",
+            "due_date": "2026-08-01",
+            "set_no": 1,
+            "case_no": 1,
+            "catalog_label": "1A",
+        },
+        trainee_name="Aaron Fong",
+        today=TODAY,
+    )
+
+    assert card.phase_no == 1
+    assert card.case_label == "Case 1A"

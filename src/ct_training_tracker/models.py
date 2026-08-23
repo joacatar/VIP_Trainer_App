@@ -1,4 +1,4 @@
-from typing import Literal, TypedDict
+from typing import Literal, NotRequired, TypedDict
 
 
 class Profile(TypedDict):
@@ -13,6 +13,8 @@ class Trainee(TypedDict):
     current_phase: str
     start_date: str
     is_test: bool
+    # Set when the trainee enters phase 2 (simulated live cases); None before.
+    phase_2_started_on: NotRequired[str | None]
 
 
 class HomeworkCase(TypedDict):

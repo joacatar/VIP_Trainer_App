@@ -541,3 +541,154 @@ def test_bulk_update_due_dates_reports_partial_failures() -> None:
     assert failed == ["case-b"]
     updated_cases = [case_id for table, case_id, _ in client.calls if table == "cases"]
     assert updated_cases == ["case-a", "case-c"]
+
+
+class RecordingCaseQuery:
+    """Captures the filters and ordering list_cases applies."""
+
+    def __init__(self, log: dict[str, Any]) -> None:
+        self._log = log
+
+    def select(self, columns: str) -> "RecordingCaseQuery":
+        self._log["columns"] = columns
+        return self
+
+    def eq(self, column: str, value: Any) -> "RecordingCaseQuery":
+        self._log.setdefault("eq", []).append((column, value))
+        return self
+
+    def lte(self, column: str, value: Any) -> "RecordingCaseQuery":
+        self._log.setdefault("lte", []).append((column, value))
+        return self
+
+    def order(self, column: str) -> "RecordingCaseQuery":
+        self._log.setdefault("order", []).append(column)
+        return self
+
+    def execute(self) -> SimpleNamespace:
+        return SimpleNamespace(data=[])
+
+
+class RecordingCaseClient:
+    def __init__(self) -> None:
+        self.log: dict[str, Any] = {}
+
+    def table(self, name: str) -> RecordingCaseQuery:
+        self.log["table"] = name
+        return RecordingCaseQuery(self.log)
+
+
+def test_list_cases_defaults_to_every_phase_and_release_state() -> None:
+    client = RecordingCaseClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.list_cases("trainee-1")
+
+    assert client.log["eq"] == [("trainee_id", "trainee-1")]
+    assert "lte" not in client.log
+    assert client.log["order"] == ["phase_no", "set_no", "case_no"]
+    assert "phase_no" in client.log["columns"]
+    assert "released_on" in client.log["columns"]
+
+
+def test_list_cases_can_limit_to_one_phase() -> None:
+    client = RecordingCaseClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.list_cases("trainee-1", phase_no=2)
+
+    assert ("phase_no", 2) in client.log["eq"]
+
+
+def test_list_cases_hides_unreleased_phase_2_cases_when_asked() -> None:
+    client = RecordingCaseClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.list_cases("trainee-1", phase_no=2, released_only=True)
+
+    assert client.log["lte"] == [
+        ("released_on", dt.date.today().isoformat())
+    ]
+
+
+def test_phase_2_cases_never_borrow_a_phase_1_vip_order_number() -> None:
+    from ct_training_tracker.case_labels import (
+        case_catalog_label,
+        case_order_number,
+        case_title,
+    )
+
+    # Phase 2 reuses set_no 1 with case_no 1-30; case 3 of set 1 has a real
+    # phase-1 order number that must not leak into the live case.
+    phase_1 = {"phase_no": 1, "set_no": 1, "case_no": 3, "catalog_label": "3A"}
+    phase_2 = {
+        "phase_no": 2,
+        "set_no": 1,
+        "case_no": 3,
+        "catalog_label": "L03",
+        "order_number": None,
+    }
+
+    assert case_order_number(phase_1) == "12-26-02-0008"
+    assert case_order_number(phase_2) is None
+    assert case_title(phase_2) == "Live case L03"
+    assert case_catalog_label(phase_2) == "L03"
+
+
+def test_phase_2_case_shows_its_real_order_number_once_backfilled() -> None:
+    from ct_training_tracker.case_labels import case_title
+
+    case = {
+        "phase_no": 2,
+        "set_no": 1,
+        "case_no": 3,
+        "catalog_label": "L03",
+        "order_number": "12-26-09-0123",
+    }
+
+    assert case_title(case) == "Live case L03 · 12-26-09-0123"
+
+
+def test_rows_without_phase_no_still_behave_as_phase_1() -> None:
+    from ct_training_tracker.case_labels import case_order_number
+
+    legacy = {"set_no": 2, "case_no": 1, "catalog_label": "1B"}
+
+    assert case_order_number(legacy) == "12-26-02-0003"
+
+
+def test_case_columns_never_leak_the_source_case_by_default() -> None:
+    client = RecordingCaseClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.list_cases("trainee-1", phase_no=2, released_only=True)
+
+    columns = client.log["columns"]
+    assert "source_order_number" not in columns
+    # The manual/plan-only instruction does have to reach the trainee.
+    assert "instruction" in columns
+
+
+def test_trainer_can_opt_into_the_source_case() -> None:
+    client = RecordingCaseClient()
+    repository = TrainingRepository(client)  # type: ignore[arg-type]
+
+    repository.list_cases("trainee-1", phase_no=2, include_source=True)
+
+    assert "source_order_number" in client.log["columns"]
+
+
+def test_case_label_shows_live_case_for_phase_2() -> None:
+    from ct_training_tracker.case_labels import case_label
+
+    phase_1 = {"phase_no": 1, "set_no": 1, "case_no": 1, "catalog_label": "1A"}
+    phase_2 = {
+        "phase_no": 2,
+        "set_no": 1,
+        "case_no": 6,
+        "catalog_label": "L06",
+        "order_number": "12-26-07-0005",
+    }
+
+    assert case_label(phase_1) == "Case 1A · 12-26-02-0002"
+    assert case_label(phase_2) == "Live case L06 · 12-26-07-0005"

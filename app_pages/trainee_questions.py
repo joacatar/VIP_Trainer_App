@@ -21,7 +21,7 @@ def main() -> None:
         )
         return
 
-    cases = runtime.repository.list_cases(trainee["id"])
+    cases = runtime.repository.list_cases(trainee["id"], released_only=True)
     render_trainee_question_inbox(
         runtime.repository,
         user_id=runtime.profile["id"],

@@ -103,10 +103,18 @@ def enrich_cases(
         rows.append(
             {
                 "id": case["id"],
+                "phase_no": int(case.get("phase_no") or 1),
                 "set_no": case["set_no"],
                 "case_no": case["case_no"],
                 "catalog_label": case_catalog_label(case),
                 "order_number": case_order_number(case),
+                "journey_category": case.get("journey_category"),
+                # "" not None: a None mixed into a pandas string column
+                # round-trips as NaN, which is truthy — an empty string is
+                # what the truthy check in render_case_header actually
+                # needs. Same convention as `notes` above.
+                "instruction": case.get("instruction") or "",
+                "released_on": case.get("released_on"),
                 "status": raw_status.replace("_", " ").title(),
                 "due_date": case.get("due_date") or case.get("schedule_due_date"),
                 "schedule_due_date": case.get("schedule_due_date"),
@@ -240,23 +248,50 @@ def select_case_from_list(
     role: AppRole,
     trainee_id: str | None = None,
     default_filter: CaseFilter = "needs_you",
+    phase_no: int = 1,
 ) -> dict[str, Any] | None:
-    """Render a compact filtered case inbox and return the selected row."""
+    """Render a compact filtered case inbox and return the selected row.
+
+    `phase_no` scopes the list to phase-1 catalog cases (with the Set 1/2
+    toggle) or phase-2 live cases (a single flat list — phase 2 has no sets,
+    and its cases reuse `set_no = 1`, so mixing phases here would silently
+    merge unrelated cases under "Set 1").
+    """
     if frame.empty:
         st.info("No cases found.")
         return None
 
+    phase_frame = frame.loc[
+        frame["phase_no"].fillna(1).astype(int) == phase_no
+    ].copy()
+
     labels = filter_labels(role)
-    with st.container(horizontal=True, gap="small"):
-        set_no = st.segmented_control(
-            "Set",
-            options=[1, 2],
-            format_func=lambda value: f"Set {value}",
-            default=1,
-            key=f"{key_prefix}_set",
-            label_visibility="collapsed",
-            width="content",
-        )
+    if phase_no == 1:
+        with st.container(horizontal=True, gap="small"):
+            set_no = st.segmented_control(
+                "Set",
+                options=[1, 2],
+                format_func=lambda value: f"Set {value}",
+                default=1,
+                key=f"{key_prefix}_set",
+                label_visibility="collapsed",
+                width="content",
+            )
+            filter_key = st.segmented_control(
+                "Show",
+                options=list(labels),
+                format_func=lambda value: labels[value],
+                default=default_filter,
+                key=f"{key_prefix}_filter",
+                label_visibility="collapsed",
+                width="content",
+            )
+        if set_no is None:
+            set_no = 1
+        set_frame = phase_frame.loc[phase_frame["set_no"] == set_no].copy()
+        scope_noun = "in set"
+        scope_adjective = "in this set"
+    else:
         filter_key = st.segmented_control(
             "Show",
             options=list(labels),
@@ -266,12 +301,13 @@ def select_case_from_list(
             label_visibility="collapsed",
             width="content",
         )
-    if set_no is None:
-        set_no = 1
+        set_frame = phase_frame
+        set_no = 1  # phase 2 has no sets; kept only for a unique row key below.
+        scope_noun = "released"
+        scope_adjective = "among released cases"
     if filter_key is None:
         filter_key = "all"
 
-    set_frame = frame.loc[frame["set_no"] == set_no].copy()
     filtered = sort_case_rows(
         apply_case_filter(set_frame, filter_key, role=role),
         role=role,
@@ -280,7 +316,7 @@ def select_case_from_list(
     needs_count = len(apply_case_filter(set_frame, "needs_you", role=role))
     waiting_count = len(apply_case_filter(set_frame, "with_other", role=role))
     counts = st.columns(3)
-    counts[0].caption(f"{len(set_frame)} in set")
+    counts[0].caption(f"{len(set_frame)} {scope_noun}")
     counts[1].caption(f"{needs_count} need you")
     counts[2].caption(
         f"{waiting_count} "
@@ -291,7 +327,7 @@ def select_case_from_list(
         row["id"]: row for row in set_frame.to_dict(orient="records")
     }
     if not all_in_set:
-        st.caption("No cases in this set.")
+        st.caption(f"No cases {scope_adjective}.")
         return None
 
     rows = filtered.to_dict(orient="records")
@@ -300,13 +336,15 @@ def select_case_from_list(
     if filtered.empty:
         if filter_key == "needs_you":
             st.caption(
-                "Nothing needs you in this set. Try "
+                f"Nothing needs you {scope_adjective}. Try "
                 f"{labels['with_other']} or All."
             )
         elif filter_key == "with_other":
-            st.caption("No cases waiting on the other person in this set.")
+            st.caption(
+                f"No cases {scope_adjective} waiting on the other person."
+            )
         else:
-            st.caption("No cases in this set.")
+            st.caption(f"No cases {scope_adjective}.")
 
     requested = query_value("case")
     if requested not in all_in_set:

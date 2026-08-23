@@ -41,13 +41,23 @@ ORDER_NUMBERS: dict[tuple[int, int], str] = {
 }
 
 
+def case_phase_no(row: dict[str, Any]) -> int:
+    """1 = phase-1 catalog case, 2 = simulated live case. Defaults to 1."""
+    try:
+        return int(row.get("phase_no") or 1)
+    except (TypeError, ValueError):
+        return 1
+
+
 def case_catalog_label(row: dict[str, Any]) -> str:
-    """APAC list id: 1A–16A (Set 1) or 1B–16B (Set 2)."""
+    """APAC list id: 1A–16A (Set 1), 1B–16B (Set 2), L01–L30 (phase 2)."""
     label = row.get("catalog_label")
     if label:
         return str(label)
-    set_no = int(row["set_no"])
     case_no = int(row["case_no"])
+    if case_phase_no(row) == 2:
+        return f"L{case_no:02d}"
+    set_no = int(row["set_no"])
     return f"{case_no}{'A' if set_no == 1 else 'B'}"
 
 
@@ -56,6 +66,11 @@ def case_order_number(row: dict[str, Any]) -> str | None:
     order = row.get("order_number")
     if order:
         return str(order)
+    # Phase-2 cases reuse set_no 1 with case_no 1-30, so the phase-1 catalog
+    # map would hand back an unrelated case's VIP number. Their real numbers
+    # come from the database once they are backfilled.
+    if case_phase_no(row) != 1:
+        return None
     try:
         key = (int(row["set_no"]), int(row["case_no"]))
     except (KeyError, TypeError, ValueError):
@@ -66,12 +81,16 @@ def case_order_number(row: dict[str, Any]) -> str | None:
 def case_label(row: dict[str, Any]) -> str:
     """Short label for buttons and compact selectors."""
     order = case_order_number(row)
-    label = f"Case {case_catalog_label(row)}"
+    prefix = "Live case" if case_phase_no(row) == 2 else "Case"
+    label = f"{prefix} {case_catalog_label(row)}"
     return f"{label} · {order}" if order else label
 
 
 def case_title(row: dict[str, Any]) -> str:
     """Full set + catalog label + VIP order for headers."""
     order = case_order_number(row)
-    title = f"Set {row['set_no']} · Case {case_catalog_label(row)}"
+    if case_phase_no(row) == 2:
+        title = f"Live case {case_catalog_label(row)}"
+    else:
+        title = f"Set {row['set_no']} · Case {case_catalog_label(row)}"
     return f"{title} · {order}" if order else title

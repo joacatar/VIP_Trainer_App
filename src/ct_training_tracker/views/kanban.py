@@ -132,7 +132,8 @@ def _render_card(card: BoardCard, *, dimmed: bool) -> None:
             if card.badge_label and card.badge_color:
                 st.badge(card.badge_label, color=card.badge_color)  # type: ignore[arg-type]
 
-        st.caption(f"{card.trainee_name} · Set {card.set_no}")
+        scope = "Live case" if card.phase_no == 2 else f"Set {card.set_no}"
+        st.caption(f"{card.trainee_name} · {scope}")
 
         if card.footer:
             if card.footer_urgent:

@@ -153,3 +153,89 @@ def test_case_owner_and_next_step() -> None:
     assert next_step("in_review", role="trainer") == "Review package"
     assert next_step("in_review", role="trainee") == "Waiting on trainer"
     assert next_step("not_started", role="trainer") == "Assign this case"
+
+
+def test_enrich_cases_carries_phase_2_columns() -> None:
+    cases = [
+        {
+            "id": "case-l06",
+            "phase_no": 2,
+            "set_no": 1,
+            "case_no": 6,
+            "catalog_label": "L06",
+            "order_number": "12-26-07-0005",
+            "journey_category": "Manual",
+            "instruction": "Reject and plan manually for practice",
+            "released_on": "2026-09-01",
+            "status": "assigned",
+            "due_date": "2026-09-02",
+            "schedule_due_date": "2026-09-02",
+            "file_requirements": [],
+        }
+    ]
+
+    frame = enrich_cases(cases, [], role="trainee")
+    row = frame.iloc[0]
+
+    assert row["phase_no"] == 2
+    assert row["journey_category"] == "Manual"
+    assert row["instruction"] == "Reject and plan manually for practice"
+    assert row["released_on"] == "2026-09-01"
+
+
+def test_enrich_cases_defaults_phase_no_for_legacy_rows() -> None:
+    cases = [
+        {
+            "id": "case-1",
+            "set_no": 1,
+            "case_no": 1,
+            "status": "assigned",
+            "due_date": "2026-07-28",
+            "schedule_due_date": "2026-07-27",
+            "file_requirements": [],
+        }
+    ]
+
+    frame = enrich_cases(cases, [], role="trainee")
+
+    assert frame.iloc[0]["phase_no"] == 1
+
+
+def test_enrich_cases_never_lets_a_missing_instruction_become_truthy() -> None:
+    """Regression: a None mixed into a pandas string column round-trips as
+    NaN — and NaN is truthy in Python. Needs two rows through one DataFrame
+    to trigger the dtype coercion; a single hand-built dict would not catch
+    this the way going through enrich_cases() does."""
+    cases = [
+        {
+            "id": "case-plain",
+            "phase_no": 2,
+            "set_no": 1,
+            "case_no": 1,
+            "catalog_label": "L01",
+            "instruction": None,
+            "status": "not_started",
+            "due_date": "2026-08-25",
+            "schedule_due_date": "2026-08-25",
+            "file_requirements": [],
+        },
+        {
+            "id": "case-manual",
+            "phase_no": 2,
+            "set_no": 1,
+            "case_no": 6,
+            "catalog_label": "L06",
+            "instruction": "Reject and plan manually for practice",
+            "status": "not_started",
+            "due_date": "2026-08-26",
+            "schedule_due_date": "2026-08-26",
+            "file_requirements": [],
+        },
+    ]
+
+    frame = enrich_cases(cases, [], role="trainee")
+    plain_row = frame.iloc[0].to_dict()
+    manual_row = frame.iloc[1].to_dict()
+
+    assert not plain_row["instruction"]
+    assert manual_row["instruction"] == "Reject and plan manually for practice"

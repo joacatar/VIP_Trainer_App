@@ -11,6 +11,7 @@ import streamlit as st
 from ct_training_tracker.case_labels import (
     case_catalog_label,
     case_order_number,
+    case_phase_no,
     case_title,
 )
 
@@ -93,6 +94,11 @@ def render_case_header(
                 st.markdown(f"**Next:** {next_action}")
         with status_column:
             st.badge(status_label, color=status_color(status))
+        # Mandatory per-case instruction (e.g. "Reject and plan manually for
+        # practice") — a warning, not a note, so it reads as something the
+        # trainee must do rather than optional context.
+        if case.get("instruction"):
+            st.warning(case["instruction"], icon=":material/priority_high:")
         if case.get("notes"):
             st.info(case["notes"], icon=":material/notes:")
 
@@ -110,10 +116,13 @@ def render_compact_review_header(case: dict[str, Any]) -> None:
     trainee = str(case.get("trainee_name") or "Trainee").upper()
     due = case.get("due_date") or case.get("schedule_due_date") or "—"
     order = case_order_number(case)
-    bits = [
-        f"Set {case.get('set_no')}",
-        f"Case {case_catalog_label(case)}",
-    ]
+    if case_phase_no(case) == 2:
+        bits = [f"Live case {case_catalog_label(case)}"]
+    else:
+        bits = [
+            f"Set {case.get('set_no')}",
+            f"Case {case_catalog_label(case)}",
+        ]
     if order:
         bits.append(order)
     bits.append(f"Due {due}")
@@ -124,4 +133,6 @@ def render_compact_review_header(case: dict[str, Any]) -> None:
         st.markdown(f"**{trainee}**  \n:gray[{meta}]")
     with right:
         st.badge(status_label, color=status_color(status))
+    if case.get("instruction"):
+        st.warning(case["instruction"], icon=":material/priority_high:")
     st.divider()
