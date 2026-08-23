@@ -239,3 +239,72 @@ def test_enrich_cases_never_lets_a_missing_instruction_become_truthy() -> None:
 
     assert not plain_row["instruction"]
     assert manual_row["instruction"] == "Reject and plan manually for practice"
+
+
+def test_trainee_dashboard_falls_through_when_nothing_is_actionable() -> None:
+    """A trainee whose 32 phase-1 cases are all approved has nothing in
+    'needs_you' — regression for the dashboard incorrectly picking a stale
+    approved case as 'next up' instead of a caught-up state."""
+    cases = [
+        {
+            "id": f"p1-{i}",
+            "phase_no": 1,
+            "set_no": 1 if i <= 16 else 2,
+            "case_no": i if i <= 16 else i - 16,
+            "catalog_label": f"{i}A",
+            "status": "approved",
+            "due_date": "2026-07-28",
+            "schedule_due_date": "2026-07-28",
+            "file_requirements": [],
+        }
+        for i in range(1, 33)
+    ]
+
+    frame = enrich_cases(cases, [], role="trainee")
+    actionable = apply_case_filter(frame, "needs_you", role="trainee")
+    waiting = apply_case_filter(frame, "with_other", role="trainee")
+
+    assert actionable.empty
+    assert waiting.empty
+
+
+def test_trainee_dashboard_surfaces_an_assigned_live_case_as_actionable() -> None:
+    """Once the trainer explicitly assigns a phase-2 case (status becomes
+    'assigned'), it must be actionable for the trainee — the release date on
+    its own never makes a case visible; only the trainer's "Assign case"
+    action does, exactly like phase 1."""
+    cases = [
+        {
+            "id": "p2-1",
+            "phase_no": 2,
+            "set_no": 1,
+            "case_no": 1,
+            "catalog_label": "L01",
+            "status": "assigned",
+            "due_date": "2026-08-25",
+            "schedule_due_date": "2026-08-25",
+            "released_on": "2026-08-24",
+            "file_requirements": [],
+        }
+    ]
+
+    frame = enrich_cases(cases, [], role="trainee")
+    actionable = apply_case_filter(frame, "needs_you", role="trainee")
+
+    assert len(actionable) == 1
+    next_case = pick_next_case(frame, role="trainee")
+    assert next_case is not None
+    assert next_case["phase_no"] == 2
+
+
+def test_all_caught_up_needs_no_repository_or_date_lookup() -> None:
+    """The all-caught-up card must never promise a specific release date —
+    assignment is a manual trainer action, so `released_on` (the trainer's
+    own suggested pacing) is not a commitment to the trainee. Regression for
+    an earlier version that quoted a "next batch unlocks on <date>" date."""
+    import inspect
+
+    from ct_training_tracker.views.trainee import _render_all_caught_up
+
+    params = set(inspect.signature(_render_all_caught_up).parameters)
+    assert params == {"trainee", "frame"}
