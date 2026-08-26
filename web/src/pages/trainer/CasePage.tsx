@@ -1,5 +1,5 @@
-import { useMemo, useState, type FormEvent } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ActionBar } from '@/components/ui/ActionBar'
 import { Button } from '@/components/ui/Button'
@@ -15,6 +15,7 @@ import {
   answerQuestion,
   createCorrectionThread,
   createRevision,
+  discardEmptyDraftRevisions,
   getCase,
   getCaseOwnerUserId,
   getTrainee,
@@ -26,6 +27,7 @@ import {
   publishCaseReview,
   resolveThread,
   reviewFileRequirement,
+  touchCaseOpened,
   uploadThreadScreenshot,
 } from '@/lib/api'
 import {
@@ -46,12 +48,12 @@ const RELATED_OPTIONS = [
 ] as const
 
 /**
- * Trainer review workspace — mirrors Streamlit's 3-step flow:
- * 1. Files  2. Raise corrections (draft)  3. Publish / Approve
- * Critical: never create an empty revision just to click Publish.
+ * Trainer review — one-shot send (no draft park). Approve or send a
+ * correction / screenshot update in a single action.
  */
 export function TrainerCasePage() {
   const { caseId = '' } = useParams()
+  const navigate = useNavigate()
   const qc = useQueryClient()
   const { user } = useAuth()
   const [section, setSection] = useState<string>(REVIEW_SECTIONS[0].key)
@@ -98,6 +100,19 @@ export function TrainerCasePage() {
     enabled: !!caseId,
   })
 
+  // Stamp Last checked once per visit; discard empty orphan drafts.
+  useEffect(() => {
+    if (!caseId) return
+    void touchCaseOpened(caseId).catch(() => {
+      /* non-fatal — queue still works without stamp */
+    })
+    void discardEmptyDraftRevisions(caseId)
+      .then(() => qc.invalidateQueries({ queryKey: ['revisions', caseId] }))
+      .catch(() => {
+        /* ignore — approve path still works if discard fails */
+      })
+  }, [caseId, qc])
+
   const ownerUserId =
     ownerQ.data ?? traineeQ.data?.auth_user_id ?? user?.id ?? ''
 
@@ -123,6 +138,7 @@ export function TrainerCasePage() {
     void qc.invalidateQueries({ queryKey: ['threads', caseId] })
     void qc.invalidateQueries({ queryKey: ['case-questions', caseId] })
     void qc.invalidateQueries({ queryKey: ['revisions', caseId] })
+    void qc.invalidateQueries({ queryKey: ['trainer-queue'] })
     void qc.invalidateQueries({ queryKey: ['trainer-cases'] })
     void qc.invalidateQueries({ queryKey: ['progress'] })
     void qc.invalidateQueries({ queryKey: ['screenshot-urls'] })
@@ -147,11 +163,24 @@ export function TrainerCasePage() {
 
   async function ensureDraftRevisionId(): Promise<string> {
     if (draftRevisionId) return draftRevisionId
+    await discardEmptyDraftRevisions(caseId)
     return createRevision(caseId)
   }
 
-  const raiseThread = useMutation({
+  async function publishAndNotify(revisionId: string) {
+    await publishCaseReview({
+      caseId,
+      revisionId,
+      approvePackage: false,
+    })
+    await markOpenThreadsStillOpen(caseId, revisionId)
+  }
+
+  const sendCorrection = useMutation({
     mutationFn: async () => {
+      if (!body.trim() && pendingImages.length === 0) {
+        throw new Error('Write a correction or paste a screenshot first.')
+      }
       const revisionId = await ensureDraftRevisionId()
       const threadId = await createCorrectionThread({
         caseId,
@@ -163,83 +192,90 @@ export function TrainerCasePage() {
       if (pendingImages.length > 0) {
         await uploadPending(threadId, pendingImages)
       }
+      await publishAndNotify(revisionId)
       return threadId
     },
     onSuccess: () => {
       setBody('')
       setPendingImages([])
-      flash(
-        'Correction saved to draft. When you are done with all sections, click “Publish review & notify trainee” below.',
-      )
+      flash('Sent to trainee.')
       invalidate()
+      navigate('/trainer/cases?tab=needs_you')
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
 
-  const attachShots = useMutation({
+  const sendThreadUpdate = useMutation({
     mutationFn: async ({
       threadId,
       images,
     }: {
       threadId: string
       images: File[]
-    }) => uploadPending(threadId, images),
-    onSuccess: (_d, vars) => {
-      flash(`Attached ${vars.images.length} screenshot(s).`)
+    }) => {
+      if (images.length === 0) {
+        throw new Error('Paste or upload a screenshot first.')
+      }
+      const revisionId = await ensureDraftRevisionId()
+      await uploadPending(threadId, images)
+      await publishAndNotify(revisionId)
+      return threadId
+    },
+    onSuccess: () => {
+      flash('Update sent to trainee.')
       invalidate()
+      navigate('/trainer/cases?tab=needs_you')
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
 
-  const publish = useMutation({
-    mutationFn: async (approve: boolean) => {
-      if (approve) {
-        const acceptAll = (reqQ.data ?? [])
-          .filter((r) =>
-            ['submitted', 'under_review', 'accepted'].includes(r.status),
-          )
-          .map((r) => ({
-            requirement_id: r.id,
-            decision: 'accepted',
-            note: '',
-          }))
-        await publishCaseReview({
-          caseId,
-          revisionId: draftRevisionId,
-          fileDecisions: acceptAll,
-          approvePackage: true,
-        })
-        return { approve: true as const }
+  const sendReplacements = useMutation({
+    mutationFn: async () => {
+      if (replacementCount === 0) {
+        throw new Error('Mark at least one file for replacement first.')
       }
-
-      // Match Streamlit: only publish when there is a draft revision and/or
-      // file replacements. Never invent an empty revision just to click Publish.
-      if (!draftRevisionId && replacementCount === 0) {
-        throw new Error(
-          'Nothing to publish yet. Raise at least one correction (Save feedback) or mark a file for replacement, then publish.',
-        )
-      }
-
-      const revisionId = draftRevisionId
+      // File decisions already applied via review_file_requirement; publish
+      // to move the case to awaiting_resubmission / notify path.
       await publishCaseReview({
         caseId,
-        revisionId,
+        revisionId: draftRevisionId,
         approvePackage: false,
       })
-      if (revisionId && openThreads.length > 0) {
-        await markOpenThreadsStillOpen(caseId, revisionId)
+      if (draftRevisionId && openThreads.length > 0) {
+        await markOpenThreadsStillOpen(caseId, draftRevisionId)
       }
-      return { approve: false as const }
     },
-    onSuccess: (result) => {
-      if (result.approve) {
-        flash('Case approved. Trainee is done with this case.')
-      } else {
-        flash(
-          'Review published — trainee has been notified. Status is now corrections_sent / awaiting resubmission.',
-        )
-      }
+    onSuccess: () => {
+      flash('Sent — trainee must replace marked files.')
       invalidate()
+      navigate('/trainer/cases?tab=needs_you')
+    },
+    onError: (e: Error) => flash(e.message, 'err'),
+  })
+
+  const approve = useMutation({
+    mutationFn: async () => {
+      await discardEmptyDraftRevisions(caseId)
+      const acceptAll = (reqQ.data ?? [])
+        .filter((r) =>
+          ['submitted', 'under_review', 'accepted'].includes(r.status),
+        )
+        .map((r) => ({
+          requirement_id: r.id,
+          decision: 'accepted',
+          note: '',
+        }))
+      await publishCaseReview({
+        caseId,
+        revisionId: null,
+        fileDecisions: acceptAll,
+        approvePackage: true,
+      })
+    },
+    onSuccess: () => {
+      flash('Case approved.')
+      invalidate()
+      navigate('/trainer/cases?tab=needs_you')
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
@@ -254,7 +290,7 @@ export function TrainerCasePage() {
       flash(
         vars.decision === 'accepted'
           ? 'File accepted.'
-          : 'Replacement requested — remember to Publish review to send the package back.',
+          : 'Replacement marked — click Send replacements when ready.',
       )
       invalidate()
     },
@@ -284,22 +320,25 @@ export function TrainerCasePage() {
 
   const canReview = REVIEWABLE.includes(caseRow.status)
   const checklists = SECTION_CHECKLISTS[section] ?? []
-  const canPublish =
-    canReview && (Boolean(draftRevisionId) || replacementCount > 0)
   const canApprove =
     canReview && openThreads.length === 0 && replacementCount === 0
+  const busy =
+    sendCorrection.isPending ||
+    sendThreadUpdate.isPending ||
+    sendReplacements.isPending ||
+    approve.isPending
 
   return (
     <div className="space-y-6 pb-28">
       <PageHeader
-        title="Review workspace"
-        description="1) Check files · 2) Raise corrections · 3) Publish to notify the trainee."
+        title="Review"
+        description="Approve the package, or send one correction — no draft to forget."
         action={
           <Link
-            to={`/trainer/cases?trainee=${caseRow.trainee_id ?? ''}`}
+            to="/trainer/cases?tab=needs_you"
             className="text-sm text-primary hover:underline"
           >
-            Back to cases
+            Back to Needs you
           </Link>
         }
       />
@@ -329,36 +368,18 @@ export function TrainerCasePage() {
       ) : null}
 
       {!canReview ? (
-        <NextStepCallout title="This case is not in review">
-          Status is <strong>{caseRow.status}</strong>. You can only raise and
-          publish corrections when the case is <strong>in review</strong> or{' '}
+        <NextStepCallout title="Not in review">
+          Status is <strong>{caseRow.status}</strong>. Approve / send only work
+          when the case is <strong>in review</strong> or{' '}
           <strong>corrections sent</strong>.
           {caseRow.status === 'approved'
-            ? ' This case is already approved — it cannot be sent back unless you reopen it from the database.'
+            ? ' Already approved — cannot send back from the app.'
             : null}
-        </NextStepCallout>
-      ) : draftRevisionId ? (
-        <NextStepCallout title="Draft ready to send">
-          You have a draft revision with {openThreads.length} open correction
-          {openThreads.length === 1 ? '' : 's'}
-          {replacementCount > 0
-            ? ` and ${replacementCount} file replacement${replacementCount === 1 ? '' : 's'}`
-            : ''}
-          . Scroll to <strong>3. Finish</strong> and click{' '}
-          <strong>Publish review & notify trainee</strong>.
-        </NextStepCallout>
-      ) : openThreads.length > 0 ? (
-        <NextStepCallout title="Corrections already with trainee">
-          This case is <strong>{caseRow.status}</strong> with{' '}
-          {openThreads.length} open correction
-          {openThreads.length === 1 ? '' : 's'}. The trainee should already see
-          them. To send <em>more</em> feedback, raise new corrections below
-          (that starts a new draft), then Publish again.
         </NextStepCallout>
       ) : null}
 
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-semibold">1. Files</h3>
+        <h3 className="font-semibold">Files</h3>
         <ul className="mt-3 space-y-3">
           {(reqQ.data ?? []).map((req) => (
             <li
@@ -403,7 +424,7 @@ export function TrainerCasePage() {
                     onClick={() =>
                       fileDecision.mutate({
                         requirementId: req.id,
-                        decision: 'replacement_requested',
+                        decision: 'rejected',
                         note: 'Please replace this file',
                       })
                     }
@@ -415,20 +436,29 @@ export function TrainerCasePage() {
             </li>
           ))}
         </ul>
+        {canReview && replacementCount > 0 ? (
+          <ActionBar>
+            <Button
+              disabled={busy}
+              onClick={() => sendReplacements.mutate()}
+            >
+              {sendReplacements.isPending
+                ? 'Sending…'
+                : `Send replacements (${replacementCount})`}
+            </Button>
+          </ActionBar>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-semibold">2. Raise corrections</h3>
+        <h3 className="font-semibold">Send a correction</h3>
         <p className="mt-1 text-sm text-muted">
-          Pick a section, optionally click checklist items, paste screenshots,
-          then <strong>Save feedback</strong>. Repeat for each section. Nothing
-          is sent to the trainee until you Publish in step 3.
+          One correction (text and/or screenshots) goes to the trainee
+          immediately.
         </p>
 
         {!canReview ? (
-          <p className="mt-3 text-sm text-muted">
-            Raising is disabled while the case is not in review.
-          </p>
+          <p className="mt-3 text-sm text-muted">Disabled while not in review.</p>
         ) : (
           <>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -488,19 +518,18 @@ export function TrainerCasePage() {
                 onChange={setBody}
                 images={pendingImages}
                 onImagesChange={setPendingImages}
-                placeholder={`Correction for ${SECTION_LABELS[section]}… Paste screenshots with Ctrl+V / Cmd+V`}
-                disabled={raiseThread.isPending}
+                placeholder={`Correction for ${SECTION_LABELS[section]}… Paste with Ctrl+V / Cmd+V`}
+                disabled={busy}
               />
             </div>
             <ActionBar>
               <Button
                 disabled={
-                  (!body.trim() && pendingImages.length === 0) ||
-                  raiseThread.isPending
+                  busy || (!body.trim() && pendingImages.length === 0)
                 }
-                onClick={() => raiseThread.mutate()}
+                onClick={() => sendCorrection.mutate()}
               >
-                {raiseThread.isPending ? 'Saving…' : 'Save feedback'}
+                {sendCorrection.isPending ? 'Sending…' : 'Send correction'}
               </Button>
             </ActionBar>
           </>
@@ -515,11 +544,12 @@ export function TrainerCasePage() {
           threads={threadsQ.data ?? []}
           onResolve={canReview ? (id) => resolve.mutate(id) : undefined}
           resolving={resolve.isPending}
-          attaching={attachShots.isPending}
+          attaching={sendThreadUpdate.isPending}
+          attachLabel="Send update"
           onAttachScreenshots={
             canReview
               ? async (threadId, images) => {
-                  await attachShots.mutateAsync({ threadId, images })
+                  await sendThreadUpdate.mutateAsync({ threadId, images })
                 }
               : undefined
           }
@@ -530,41 +560,21 @@ export function TrainerCasePage() {
         <section className="sticky bottom-0 z-20 -mx-6 border-t border-border bg-surface/95 px-6 py-4 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
             <div className="text-sm">
-              <p className="font-semibold">3. Finish</p>
+              <p className="font-semibold">Finish</p>
               <p className="text-muted">
-                {canPublish
-                  ? `${draftRevisionId ? 'Draft revision ready' : 'File replacements marked'}${
-                      openThreads.length
-                        ? ` · ${openThreads.length} open correction(s)`
-                        : ''
-                    }`
-                  : 'Raise corrections or mark file replacements first.'}
+                {canApprove
+                  ? 'No open corrections — you can approve.'
+                  : openThreads.length > 0
+                    ? 'Resolve open corrections before approving, or send another.'
+                    : 'Clear file replacements before approving.'}
               </p>
             </div>
-            <div className="flex flex-wrap gap-2">
-              <Button
-                disabled={!canPublish || publish.isPending}
-                onClick={() => publish.mutate(false)}
-              >
-                {publish.isPending
-                  ? 'Publishing…'
-                  : 'Publish review & notify trainee'}
-              </Button>
-              <Button
-                variant="secondary"
-                disabled={!canApprove || publish.isPending}
-                title={
-                  !canApprove
-                    ? openThreads.length > 0
-                      ? 'Resolve open corrections first'
-                      : 'Clear replacement marks first'
-                    : undefined
-                }
-                onClick={() => publish.mutate(true)}
-              >
-                Approve case
-              </Button>
-            </div>
+            <Button
+              disabled={!canApprove || busy}
+              onClick={() => approve.mutate()}
+            >
+              {approve.isPending ? 'Approving…' : 'Approve case'}
+            </Button>
           </div>
         </section>
       ) : null}

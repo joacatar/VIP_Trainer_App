@@ -3,6 +3,7 @@ import { screenshotStoragePath } from '../domain/screenshots'
 import type {
   CaseResource,
   CaseRow,
+  CaseStatus,
   CorrectionThread,
   FileRequirement,
   HomeworkAssignment,
@@ -17,10 +18,11 @@ const RAISED_CORRECTION_COLS =
   'id, body, created_at, corrections_threads!inner(id, section, status, case_id, created_at, resolved_at, cases!inner(id, trainee_id, phase_no, set_no, case_no, catalog_label, trainees(full_name)))'
 
 const CASE_COLS =
-  'id, trainee_id, phase_no, set_no, case_no, catalog_label, order_number, journey_category, instruction, phase, released_on, status, schedule_due_date, due_date, estimated_completion_date'
+  'id, trainee_id, phase_no, set_no, case_no, catalog_label, order_number, journey_category, instruction, phase, released_on, status, schedule_due_date, due_date, estimated_completion_date, trainer_last_opened_at'
 
 const CASE_COLS_WITH_FILES = `${CASE_COLS}, file_requirements(kind, status)`
 const CASE_COLS_TRAINER = `${CASE_COLS}, source_order_number`
+const CASE_COLS_QUEUE = `${CASE_COLS}, source_order_number, trainees(full_name, is_test)`
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10)
@@ -132,6 +134,149 @@ export async function listCases(
   const { data, error } = await query
   if (error) throw error
   return (data ?? []) as unknown as CaseRow[]
+}
+
+/** Latest case_submitted_for_review timestamp per case (Received in queue). */
+async function latestReceivedAtByCase(
+  caseIds: string[],
+): Promise<Record<string, string>> {
+  if (!caseIds.length) return {}
+  const { data, error } = await supabase
+    .from('tracking_events')
+    .select('case_id, occurred_at')
+    .eq('event_type', 'case_submitted_for_review')
+    .in('case_id', caseIds)
+    .order('occurred_at', { ascending: false })
+  if (error) throw error
+  const map: Record<string, string> = {}
+  for (const row of data ?? []) {
+    const id = row.case_id as string
+    if (id && !map[id] && row.occurred_at) map[id] = row.occurred_at as string
+  }
+  return map
+}
+
+function flattenQueueRow(row: Record<string, unknown>): CaseRow {
+  const trainees = row.trainees as
+    | { full_name?: string; is_test?: boolean }
+    | null
+    | undefined
+  const { trainees: _t, ...rest } = row
+  return {
+    ...(rest as unknown as CaseRow),
+    trainee_name: trainees?.full_name ?? null,
+    trainee_is_test: trainees?.is_test ?? false,
+  }
+}
+
+/**
+ * Cross-trainee queue for the trainer Cases page.
+ * `needs_you` → in_review | corrections_sent
+ * `assign` → not_started (optional trainee filter)
+ * `with_trainee` → assigned | submitted | awaiting_resubmission
+ * `approved` → approved
+ */
+export async function listTrainerQueue(opts: {
+  tab: 'needs_you' | 'assign' | 'with_trainee' | 'approved'
+  traineeId?: string | null
+}): Promise<CaseRow[]> {
+  const statusByTab: Record<typeof opts.tab, CaseStatus[]> = {
+    needs_you: ['in_review', 'corrections_sent'],
+    assign: ['not_started'],
+    with_trainee: ['assigned', 'submitted', 'awaiting_resubmission'],
+    approved: ['approved'],
+  }
+
+  let query = supabase
+    .from('cases')
+    .select(CASE_COLS_QUEUE)
+    .in('status', statusByTab[opts.tab])
+    .order('phase_no')
+    .order('case_no')
+
+  if (opts.traineeId) query = query.eq('trainee_id', opts.traineeId)
+
+  const { data, error } = await query
+  if (error) throw error
+
+  const rows = ((data ?? []) as unknown as Record<string, unknown>[]).map(
+    flattenQueueRow,
+  )
+  const received = await latestReceivedAtByCase(rows.map((r) => r.id))
+  for (const r of rows) {
+    r.received_at = received[r.id] ?? null
+  }
+
+  if (opts.tab === 'needs_you') {
+    rows.sort((a, b) => {
+      // Fresh packages (in_review) before already-sent; then oldest Received.
+      const rank = (s: string) => (s === 'in_review' ? 0 : 1)
+      const d = rank(a.status) - rank(b.status)
+      if (d !== 0) return d
+      const ra = a.received_at ?? '9999'
+      const rb = b.received_at ?? '9999'
+      return ra.localeCompare(rb)
+    })
+  }
+
+  return rows
+}
+
+export async function touchCaseOpened(caseId: string): Promise<string> {
+  const { data, error } = await supabase.rpc('touch_case_opened', {
+    target_case_id: caseId,
+  })
+  if (error) throw error
+  return data as string
+}
+
+export async function assignHomeworkBatch(
+  items: Array<{
+    caseId: string
+    title: string
+    instructions: string
+    scheduleDueDate: string
+    dueDate: string
+  }>,
+): Promise<{ ok: string[]; failed: Array<{ caseId: string; error: string }> }> {
+  const ok: string[] = []
+  const failed: Array<{ caseId: string; error: string }> = []
+  for (const item of items) {
+    try {
+      await assignHomework(item)
+      ok.push(item.caseId)
+    } catch (e) {
+      failed.push({
+        caseId: item.caseId,
+        error: e instanceof Error ? e.message : String(e),
+      })
+    }
+  }
+  return { ok, failed }
+}
+
+/** Delete orphan empty draft revisions so Approve / one-shot send is not blocked. */
+export async function discardEmptyDraftRevisions(caseId: string): Promise<void> {
+  const { data: drafts, error } = await supabase
+    .from('revisions')
+    .select('id')
+    .eq('case_id', caseId)
+    .eq('status', 'draft')
+  if (error) throw error
+  for (const draft of drafts ?? []) {
+    const { count, error: cErr } = await supabase
+      .from('correction_events')
+      .select('id', { count: 'exact', head: true })
+      .eq('revision_id', draft.id)
+    if (cErr) throw cErr
+    if ((count ?? 0) > 0) continue
+    const { error: dErr } = await supabase
+      .from('revisions')
+      .delete()
+      .eq('id', draft.id)
+      .eq('status', 'draft')
+    if (dErr) throw dErr
+  }
 }
 
 export async function getCase(

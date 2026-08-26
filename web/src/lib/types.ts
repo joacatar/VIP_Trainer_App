@@ -50,6 +50,11 @@ export interface CaseRow {
   schedule_due_date: string | null
   due_date: string | null
   estimated_completion_date: string | null
+  trainer_last_opened_at?: string | null
+  /** Latest package submit for review (from tracking_events). */
+  received_at?: string | null
+  trainee_name?: string | null
+  trainee_is_test?: boolean
   file_requirements?: Array<{ kind: string; status: string }>
 }
 

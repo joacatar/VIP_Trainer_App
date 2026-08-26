@@ -17,12 +17,15 @@ export function CorrectionThreadList({
   resolving,
   onAttachScreenshots,
   attaching,
+  attachLabel = 'Save screenshots',
 }: {
   threads: CorrectionThread[]
   onResolve?: (threadId: string) => void
   resolving?: boolean
   onAttachScreenshots?: (threadId: string, images: File[]) => Promise<void> | void
   attaching?: boolean
+  /** Button label when attaching (trainer one-shot: "Send update"). */
+  attachLabel?: string
 }) {
   const open = threads.filter((t) => t.status !== 'resolved')
   const resolved = threads.filter((t) => t.status === 'resolved')
@@ -50,6 +53,7 @@ export function CorrectionThreadList({
                 resolving={resolving}
                 onAttachScreenshots={onAttachScreenshots}
                 attaching={attaching}
+                attachLabel={attachLabel}
               />
             </li>
           ))}
@@ -82,6 +86,7 @@ function ThreadCard({
   resolving,
   onAttachScreenshots,
   attaching,
+  attachLabel = 'Save screenshots',
 }: {
   thread: CorrectionThread
   index?: number
@@ -90,6 +95,7 @@ function ThreadCard({
   resolving?: boolean
   onAttachScreenshots?: (threadId: string, images: File[]) => Promise<void> | void
   attaching?: boolean
+  attachLabel?: string
 }) {
   const [showAttach, setShowAttach] = useState(false)
   const [note, setNote] = useState('')
@@ -181,7 +187,7 @@ function ThreadCard({
                 disabled={attaching || images.length === 0}
                 onClick={() => void saveScreenshots()}
               >
-                {attaching ? 'Saving…' : 'Save screenshots'}
+                {attaching ? 'Sending…' : attachLabel}
               </Button>
             }
           />

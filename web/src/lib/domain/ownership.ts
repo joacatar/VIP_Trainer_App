@@ -77,6 +77,46 @@ export function formatDue(due: string | null | undefined): string {
   return due
 }
 
+export function formatShortDateTime(
+  iso: string | null | undefined,
+): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return iso.slice(0, 10)
+  return d.toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+/** Whole days since `iso` (UTC date math). Null if missing. */
+export function daysSince(iso: string | null | undefined, now = new Date()): number | null {
+  if (!iso) return null
+  const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return null
+  const ms = now.getTime() - then.getTime()
+  return Math.max(0, Math.floor(ms / (24 * 60 * 60 * 1000)))
+}
+
+export function formatWaitingAge(iso: string | null | undefined): string {
+  const days = daysSince(iso)
+  if (days === null) return 'Unknown'
+  if (days === 0) return '<1d'
+  return `${days}d`
+}
+
+/** True when trainer never opened, or opened before the latest package Received. */
+export function isUnchecked(
+  receivedAt: string | null | undefined,
+  lastOpenedAt: string | null | undefined,
+): boolean {
+  if (!lastOpenedAt) return true
+  if (!receivedAt) return false
+  return lastOpenedAt < receivedAt
+}
+
 export function isOverdue(
   status: CaseStatus | string,
   due: string | null | undefined,

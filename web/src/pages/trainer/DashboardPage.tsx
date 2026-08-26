@@ -73,19 +73,30 @@ export function TrainerDashboardPage() {
 
       <MetricsRow
         items={[
-          { label: 'Needs review', value: totals.waitingTrainer },
+          {
+            label: 'Needs review',
+            value: totals.waitingTrainer,
+          },
           { label: 'Overdue', value: totals.overdue },
           { label: 'Awaiting trainee', value: totals.waitingTrainee },
           { label: 'Open questions', value: totals.openQuestions },
         ]}
       />
 
-      <Link
-        to="/trainer/analytics"
-        className="inline-flex items-center gap-1.5 text-sm font-medium text-primary hover:underline"
-      >
-        See what repeats across every trainee →
-      </Link>
+      <div className="flex flex-wrap gap-4 text-sm">
+        <Link
+          to="/trainer/cases?tab=needs_you"
+          className="font-medium text-primary hover:underline"
+        >
+          Open Needs you queue →
+        </Link>
+        <Link
+          to="/trainer/analytics"
+          className="font-medium text-primary hover:underline"
+        >
+          See what repeats across every trainee →
+        </Link>
+      </div>
 
       <section>
         <h2 className="mb-3 text-lg font-semibold">Needs attention</h2>
@@ -116,10 +127,10 @@ export function TrainerDashboardPage() {
                   </p>
                 </div>
                 <Link
-                  to={`/trainer/cases?trainee=${p.trainee_id}`}
+                  to={`/trainer/cases?tab=needs_you&trainee=${p.trainee_id}`}
                   className="text-sm font-medium text-primary hover:underline"
                 >
-                  Open cases
+                  Open queue
                 </Link>
               </li>
             ))}

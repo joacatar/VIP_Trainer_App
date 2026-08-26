@@ -34,9 +34,9 @@ npm install && npm run dev
 
 ## What still needs hardening before cutover
 
-- Screenshot paste/upload for correction threads — **done**: Jira-style
-  `PasteCommentBox` (Ctrl+V / Cmd+V, upload, drag-drop) on raise + attach
-  to existing open threads, same Storage layout as Streamlit.
+- Screenshot paste/upload for correction threads — **done**.
+- Trainer daily flow redesign — **done**: Needs you queue (Received /
+  Last checked), bulk assign, one-shot send (no draft park). Kanban removed.
 - Bulk due-date editor UI (API helper exists).
 - Analytics / section-stats screens (trainer).
 - Deploy to Vercel + Auth redirect URLs + smoke with real Dev accounts —
