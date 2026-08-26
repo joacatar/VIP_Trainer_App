@@ -1,4 +1,5 @@
-import { supabase } from '../supabase'
+import { supabase, CASE_FILES_BUCKET } from '../supabase'
+import { screenshotStoragePath } from '../domain/screenshots'
 import type {
   CaseResource,
   CaseRow,
@@ -398,6 +399,63 @@ export async function listRaisedCorrectionsForCases(
     .order('created_at', { ascending: false })
   if (error) throw error
   return (data ?? []) as unknown as RaisedCorrectionRow[]
+}
+
+/** Trainer-only (RLS: `correction_thread_screenshots` "manage" policy
+ * requires is_trainer()) — pastes/uploads a screenshot onto a correction
+ * thread, matching Streamlit's Jira-style comment box. Stored under the
+ * trainee's own auth-user folder (see screenshots.ts), not the trainer's,
+ * so trainee reads keep working under the existing storage RLS policy.
+ * Rolls the upload back if the row insert fails, same as
+ * `upload_thread_screenshot` in repository.py. */
+export async function uploadThreadScreenshot(input: {
+  threadId: string
+  caseId: string
+  ownerUserId: string
+  uploadedBy: string
+  file: File
+}): Promise<void> {
+  const objectPath = screenshotStoragePath({
+    ownerUserId: input.ownerUserId,
+    caseId: input.caseId,
+    threadId: input.threadId,
+    filename: input.file.name,
+  })
+  const { error: uploadError } = await supabase.storage
+    .from(CASE_FILES_BUCKET)
+    .upload(objectPath, input.file, {
+      contentType: input.file.type || 'application/octet-stream',
+      upsert: false,
+    })
+  if (uploadError) throw uploadError
+
+  const { error: insertError } = await supabase
+    .from('correction_thread_screenshots')
+    .insert({
+      thread_id: input.threadId,
+      storage_path: objectPath,
+      original_filename: objectPath.split('/').pop(),
+      mime_type: input.file.type || null,
+      size_bytes: input.file.size,
+      uploaded_by: input.uploadedBy,
+    })
+  if (insertError) {
+    await supabase.storage.from(CASE_FILES_BUCKET).remove([objectPath])
+    throw insertError
+  }
+}
+
+/** case-files is a private bucket — every read goes through a short-lived
+ * signed URL rather than a public one. */
+export async function getScreenshotSignedUrl(
+  storagePath: string,
+  expiresInSeconds = 600,
+): Promise<string> {
+  const { data, error } = await supabase.storage
+    .from(CASE_FILES_BUCKET)
+    .createSignedUrl(storagePath, expiresInSeconds)
+  if (error) throw error
+  return data.signedUrl
 }
 
 export async function listQuestionsForCase(caseId: string): Promise<Question[]> {

@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/Button'
 import { CaseHeader } from '@/components/ui/CaseHeader'
 import { CorrectionThreadList } from '@/components/ui/CorrectionThreadList'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { ImageAttachments } from '@/components/ui/ImageAttachments'
 import { SkeletonRows } from '@/components/ui/Skeleton'
 import { PageHeader } from '@/components/ui/PageHeader'
+import { useAuth } from '@/hooks/useAuth'
 import {
   answerQuestion,
   createCorrectionThread,
@@ -21,6 +23,7 @@ import {
   publishCaseReview,
   resolveThread,
   reviewFileRequirement,
+  uploadThreadScreenshot,
 } from '@/lib/api'
 import {
   FILE_KIND_LABELS,
@@ -29,12 +32,17 @@ import {
   SECTION_CHECKLISTS,
   SECTION_LABELS,
 } from '@/lib/domain/revisions'
+import { pastedImageFilename } from '@/lib/domain/screenshots'
+
+const PASTE_HINT = 'Paste screenshots here (Ctrl+V / Cmd+V), Jira-style.'
 
 export function TrainerCasePage() {
   const { caseId = '' } = useParams()
   const qc = useQueryClient()
+  const { user } = useAuth()
   const [section, setSection] = useState<string>(REVIEW_SECTIONS[0].key)
   const [body, setBody] = useState('')
+  const [pendingImages, setPendingImages] = useState<File[]>([])
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<string | null>(null)
 
@@ -95,15 +103,31 @@ export function TrainerCasePage() {
   const raiseThread = useMutation({
     mutationFn: async () => {
       const revisionId = await ensureRevision.mutateAsync()
-      return createCorrectionThread({
+      const threadId = await createCorrectionThread({
         caseId,
         section,
-        body: body.trim(),
+        // A screenshot-only correction is valid — Streamlit's version
+        // defaults the body the same way rather than blocking the raise.
+        body: body.trim() || 'See attached screenshot(s).',
         revisionId,
       })
+      if (pendingImages.length > 0) {
+        const ownerUserId = traineeQ.data?.auth_user_id ?? user?.id ?? ''
+        for (const file of pendingImages) {
+          await uploadThreadScreenshot({
+            threadId,
+            caseId,
+            ownerUserId,
+            uploadedBy: user?.id ?? '',
+            file,
+          })
+        }
+      }
+      return threadId
     },
     onSuccess: () => {
       setBody('')
+      setPendingImages([])
       setMsg('Correction raised.')
       invalidate()
     },
@@ -291,11 +315,60 @@ export function TrainerCasePage() {
           className="mt-3 min-h-24 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm"
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          placeholder={`Correction for ${SECTION_LABELS[section]}…`}
+          onPaste={(e) => {
+            const items = e.clipboardData?.items
+            if (!items) return
+            const images: File[] = []
+            for (const item of items) {
+              if (!item.type.startsWith('image/')) continue
+              const file = item.getAsFile()
+              if (!file) continue
+              images.push(
+                new File(
+                  [file],
+                  pastedImageFilename(item.type, pendingImages.length + images.length + 1),
+                  { type: item.type },
+                ),
+              )
+            }
+            if (images.length > 0) {
+              e.preventDefault()
+              setPendingImages((prev) => [...prev, ...images])
+            }
+          }}
+          placeholder={`Correction for ${SECTION_LABELS[section]}… ${PASTE_HINT}`}
+        />
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <label className="cursor-pointer text-xs font-medium text-primary hover:underline">
+            Upload screenshots
+            <input
+              type="file"
+              accept="image/png,image/jpeg,image/webp,image/gif"
+              multiple
+              className="hidden"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? [])
+                if (files.length > 0) {
+                  setPendingImages((prev) => [...prev, ...files])
+                }
+                e.target.value = ''
+              }}
+            />
+          </label>
+          <span className="text-xs text-muted">or {PASTE_HINT.toLowerCase()}</span>
+        </div>
+        <ImageAttachments
+          files={pendingImages}
+          onRemove={(i) =>
+            setPendingImages((prev) => prev.filter((_, idx) => idx !== i))
+          }
         />
         <ActionBar>
           <Button
-            disabled={!body.trim() || raiseThread.isPending}
+            disabled={
+              (!body.trim() && pendingImages.length === 0) ||
+              raiseThread.isPending
+            }
             onClick={() => raiseThread.mutate()}
           >
             Raise correction

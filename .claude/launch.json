@@ -6,6 +6,12 @@
       "runtimeExecutable": "./.venv/bin/streamlit",
       "runtimeArgs": ["run", "streamlit_app.py", "--server.headless", "true"],
       "port": 8501
+    },
+    {
+      "name": "web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "web", "--", "--port", "5175", "--strictPort"],
+      "port": 5175
     }
   ]
 }

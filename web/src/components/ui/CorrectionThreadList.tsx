@@ -1,5 +1,7 @@
+import { useQuery } from '@tanstack/react-query'
+import { getScreenshotSignedUrl } from '@/lib/api'
 import { SECTION_LABELS, THREAD_STATUS_LABELS } from '@/lib/domain/revisions'
-import type { CorrectionThread } from '@/lib/types'
+import type { CorrectionThread, Screenshot } from '@/lib/types'
 import { Button } from './Button'
 
 /**
@@ -128,6 +130,55 @@ function ThreadCard({
           {stillOpenCount === 1 ? '' : 's'}
         </p>
       ) : null}
+
+      <ThreadScreenshots shots={thread.correction_thread_screenshots ?? []} />
+    </div>
+  )
+}
+
+/** Signed-URL thumbnails for a thread's pasted/uploaded screenshots — the
+ * case-files bucket is private, so every view goes through a short-lived
+ * signed URL rather than a public one (same as Streamlit's "Zoom" link). */
+function ThreadScreenshots({ shots }: { shots: Screenshot[] }) {
+  const urlsQ = useQuery({
+    queryKey: ['screenshot-urls', shots.map((s) => s.storage_path)],
+    queryFn: () =>
+      Promise.all(shots.map((s) => getScreenshotSignedUrl(s.storage_path))),
+    enabled: shots.length > 0,
+    staleTime: 5 * 60 * 1000,
+  })
+
+  if (shots.length === 0) return null
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-2">
+      {shots.map((shot, i) => {
+        const url = urlsQ.data?.[i]
+        return (
+          <a
+            key={shot.id}
+            href={url ?? undefined}
+            target="_blank"
+            rel="noreferrer"
+            title={shot.original_filename}
+            className={`block h-20 w-28 overflow-hidden rounded-md border border-border bg-surface-2 ${
+              url ? '' : 'pointer-events-none'
+            }`}
+          >
+            {url ? (
+              <img
+                src={url}
+                alt={shot.original_filename}
+                className="h-full w-full object-cover"
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-xs text-muted">
+                Loading…
+              </div>
+            )}
+          </a>
+        )
+      })}
     </div>
   )
 }
