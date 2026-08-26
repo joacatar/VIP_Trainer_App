@@ -369,6 +369,18 @@ export async function reopenThread(
   if (error) throw error
 }
 
+export async function markOpenThreadsStillOpen(
+  caseId: string,
+  revisionId: string,
+): Promise<number> {
+  const { data, error } = await supabase.rpc('mark_open_threads_still_open', {
+    target_case_id: caseId,
+    target_revision_id: revisionId,
+  })
+  if (error) throw error
+  return Number(data ?? 0)
+}
+
 /** Trainer-only (RLS: corrections_threads "manage" policy requires
  * is_trainer()) — every correction ever raised, across every trainee. Feeds
  * the "Overall" analytics tab. */

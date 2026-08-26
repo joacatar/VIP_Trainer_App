@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { CaseHeader } from '@/components/ui/CaseHeader'
 import { CorrectionThreadList } from '@/components/ui/CorrectionThreadList'
 import { EmptyState } from '@/components/ui/EmptyState'
+import { NextStepCallout } from '@/components/ui/NextStepCallout'
 import { SkeletonRows } from '@/components/ui/Skeleton'
 import { PageHeader } from '@/components/ui/PageHeader'
 import {
@@ -154,6 +155,19 @@ export function TraineeCasePage() {
         </p>
       ) : null}
 
+      {caseRow.status === 'corrections_sent' ||
+      caseRow.status === 'awaiting_resubmission' ? (
+        <NextStepCallout title="Trainer sent corrections">
+          Read the feedback below, fix the files that need replacement, then
+          submit the package again.
+        </NextStepCallout>
+      ) : null}
+
+      <section className="rounded-lg border border-border bg-surface p-4">
+        <h3 className="font-semibold">Corrections</h3>
+        <CorrectionThreadList threads={threadsQ.data ?? []} />
+      </section>
+
       {(resourcesQ.data?.length ?? 0) > 0 ? (
         <section className="rounded-lg border border-border bg-surface p-4">
           <h3 className="font-semibold">Source material</h3>
@@ -244,11 +258,6 @@ export function TraineeCasePage() {
             </Button>
           </ActionBar>
         ) : null}
-      </section>
-
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-semibold">Corrections</h3>
-        <CorrectionThreadList threads={threadsQ.data ?? []} />
       </section>
 
       <section className="rounded-lg border border-border bg-surface p-4">
