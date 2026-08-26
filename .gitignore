@@ -14,3 +14,4 @@
 **/.ruff_cache/
 **/*.egg-info/
 *.pyc
+.cursor/mcp.json

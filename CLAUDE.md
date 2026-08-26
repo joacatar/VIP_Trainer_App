@@ -106,6 +106,20 @@ per case; the trainer reviews, raises corrections, and approves.
   `APAC INTEGRATION/` are **not** part of this product; do not modify them
   unless explicitly asked.
 
+### Project brain — read before non-trivial changes
+
+`.claude/brain/` is the durable, kept-current knowledge base for this
+project: architecture, full data model, phase-1/phase-2 domain rules, and a
+`gotchas.md` list of concrete traps found the hard way (each one caused a
+real bug). Start at [`.claude/brain/README.md`](.claude/brain/README.md) for
+the index. **Before touching case status, assignment, or anything phase-2,
+read `.claude/brain/data-model.md` and `.claude/brain/gotchas.md` first** —
+this is not optional, both were written specifically because skipping this
+step caused real, user-facing bugs in this app. There is also a standing
+note at `.claude/brain/react-remake.md` recording the trainer's intent to
+eventually redo the UI in React — read it before starting any frontend
+rewrite work.
+
 ### Architecture rules
 
 - **Views never query the database.** All data access goes through
@@ -123,6 +137,8 @@ per case; the trainer reviews, raises corrections, and approves.
   a service-role key in the app.
 
 ### Domain model — phase 1 (shipped)
+
+Full detail in [`.claude/brain/phase-1.md`](.claude/brain/phase-1.md).
 
 - `trainees` — one row per person; `start_date` drives the schedule;
   `current_phase` is a `training_phase` enum (`ct_disposition`, `ct_planning`).
@@ -146,28 +162,35 @@ per case; the trainer reviews, raises corrections, and approves.
 
 ### Domain model — phase 2 (simulated live cases)
 
+Full detail, migration history, and the two real bugs this shipped with (and
+their fixes) live in
+[`.claude/brain/phase-2.md`](.claude/brain/phase-2.md) — this is a summary.
+
 In production, a trainee who finishes phase 1 moves on to **live production
 cases**: they work a real case, send it to the trainer, and get corrections
 back. Trainees have no production access, so phase 2 is **simulated** with 30
-fixed cases whose source material is preloaded as OneDrive links in
-`case_resources`. The trainee still generates and submits PDF 1 / PDF 2 / OV,
-and the review cycle is byte-for-byte the phase-1 cycle — that is what "ciclo"
-means here, not batching.
+fixed cases (`catalog_label` `L01`–`L30`, `set_no` always `1`). The trainee
+still generates and submits PDF 1 / PDF 2 / OV, and the review cycle is
+byte-for-byte the phase-1 cycle — that is what "ciclo" means here, not
+batching.
 
-- `cases.phase_no` (1 or 2) is the phase discriminator; phase 2 uses
-  `set_no = 1`, `case_no` 1–30, `catalog_label` `L01`–`L30`.
-- Phase 2 starts **automatically** when all 32 phase-1 cases reach `approved`
-  (trigger `on_case_approved_start_phase_2` → `private.start_phase_2`), which
-  stamps `trainees.phase_2_started_on`.
-- Five cases are released per working day over six days.
-  `cases.released_on` is the release date; the case is due the **next working
-  day** after release. Both come from `private.training_date()`, so weekends
-  and holidays are skipped.
-- All 30 rows are created at once so the trainer sees the whole plan;
-  trainee-facing queries pass `released_only=True` to hide unreleased cases.
-- Phase-2 cases have **no** `journey_category` and (until the real VIP numbers
-  arrive) no `order_number` — both columns are nullable now, so anything
-  reading them needs a fallback.
+- `cases.phase_no` (1 or 2) is the phase discriminator.
+- Phase 2 **starts** automatically when all 32 phase-1 cases reach `approved`
+  (trigger `on_case_approved_start_phase_2` → `private.start_phase_2`),
+  stamping `trainees.phase_2_started_on` and creating all 30 cases at once
+  (`status = 'not_started'`, same default as phase 1).
+- **Assignment is manual, one case at a time — same as phase 1, no
+  shortcut.** `cases.released_on`/`due_date` are only the trainer's
+  *suggested* pacing (5/working day) shown when they click "Assign case";
+  they are not a visibility mechanism. A `not_started` case is invisible to
+  the trainee purely because `not_started` is trainer-owned (see
+  `.claude/brain/data-model.md`'s ownership model) — do not build a
+  date-based gate on top of that; one was built and reverted the same day.
+- `order_number`/`source_order_number`/`journey_category` (`Success`|
+  `Manual`)/`instruction` are the real catalog data, per `case_no`.
+  `source_order_number` is trainer-only — never surface it to a trainee.
+- Preloaded source material: **deferred**, trainees will supply their own
+  links later — don't build a `case_resources` pipeline for this unasked.
 
 ### Commands
 

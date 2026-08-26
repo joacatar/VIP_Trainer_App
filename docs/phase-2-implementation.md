@@ -39,12 +39,15 @@ gate, so no gating code should be written.
 | `supabase/migrations/20260823140000_phase_2_live_cases.sql` | Applied to Dev |
 | `supabase/migrations/20260823150000_phase_2_case_catalog.sql` | Applied to Dev — the 30 VIP numbers, case types and instructions |
 | `supabase/migrations/20260823160000_phase_2_backfill_completed_trainees.sql` | Applied to Dev — see the bug note below |
+| `supabase/migrations/20260823170000_phase_2_cases_start_assigned.sql` | Applied to Dev — see the second bug note below |
+| `supabase/migrations/20260823180000_phase_2_cases_stay_unassigned.sql` | Applied to Dev — **reverts** the row above; see the correction note below |
+| `supabase/migrations/20260823190000_phase_2_case_status_matches_homework.sql` | Applied to Dev — data-repair for the collateral damage the revert caused; see below |
 | `src/ct_training_tracker/repository.py` | `list_cases(phase_no=…, released_only=…)`, phase columns in selects |
 | `src/ct_training_tracker/models.py` | `Trainee.phase_2_started_on` |
 | `src/ct_training_tracker/case_labels.py` | `case_phase_no()`; phase-2 labels and VIP-number guard |
-| `tests/test_repository.py`, `test_metrics.py`, `test_trainee_view.py` | 21 new tests across the three |
+| `tests/test_repository.py`, `test_metrics.py`, `test_trainee_view.py` | 24 new tests across the three (137 total) |
 
-Green locally: `ruff check` clean, **133 tests pass**. There is no local
+Green locally: `ruff check` clean, **137 tests pass**. There is no local
 Postgres, Docker or Supabase CLI on this machine, so no SQL here was ever
 executed locally — both migrations and the case catalog were applied to Dev
 directly through the Supabase MCP, with every check in §4 and §7.1 run
@@ -66,6 +69,87 @@ the same idempotent `private.start_phase_2()` — safe to re-run, and a no-op on
 an environment (e.g. Prod, later) where the trigger already caught everyone.
 Applied to Dev: both trainees now show `phase_2_started_on = 2026-08-23` with
 30 phase-2 cases each.
+
+**Second, more serious bug found the same day: phase-2 cases were invisible
+to trainees even after release.** `start_phase_2()` created cases with the
+default status, `not_started`. `not_started` is **trainer-owned**
+(`TRAINER_OWNED_STATUSES`, `metrics.py`) — in phase 1 it means "the trainer
+hasn't clicked Assign case yet," and a trainee never sees a `not_started`
+case in "needs you" or as their next case; the dashboard shows "Waiting for
+assignment." Phase 2 has no assignment step by design (release is the
+trigger), so every one of the 30 cases was structurally stuck: even once
+released, a trainee would see nothing, and the trainer would have had to
+click "Assign case" 30 times per trainee — exactly the manual work "automatic"
+was meant to replace. Real trainees (AARON FONG, Max Pentecost) hit this and
+reported "I don't see any new cases."
+`20260823170000_phase_2_cases_start_assigned.sql` makes `start_phase_2()`
+create cases as `'assigned'` (trainee-owned from the moment they release) and
+backfills the 60 cases already created for these two trainees. Verified
+end-to-end against real Dev data (see §5.4 below) that a released, `assigned`
+phase-2 case now surfaces correctly as the trainee's next case.
+
+**Also added: a trainee dashboard "all caught up" state.** Previously, once a
+trainee had nothing in "needs you" (e.g. all 32 phase-1 cases approved, phase
+2 not released yet), the dashboard fell back to showing *some* approved case
+as "Next up" — confusing, and indistinguishable from having real work to do.
+`views/trainee.py` now branches on whether anything is actually actionable:
+nothing at all → the existing "No cases yet" state; cases exist but none need
+the trainee and phase 2 has started → a "🎉 Phase 1 complete — you're in Live
+cases now" card, naming the date the next batch unlocks if any are still
+pending; cases are with the trainer for review → "N cases in review"; anything
+actionable → the existing next-up card, unchanged.
+
+**Correction 2026-08-23, same day: the auto-assign fix above was wrong.**
+The trainer clarified the actual model: only case *creation* and the
+release/pacing schedule are automatic. **Assignment stays manual, one case at
+a time, exactly like phase 1** — the 30 phase-2 cases sit in the trainer's
+inbox as `not_started` ("needs assignment") and a trainee sees only what the
+trainer has explicitly clicked "Assign case" on.
+`20260823180000_phase_2_cases_stay_unassigned.sql` reverts
+`start_phase_2()` to the phase-1 pattern (status defaults to `not_started`,
+not specified in the insert) and reverts the 60 rows the previous migration
+touched. `released_on`/`due_date` keep their meaning as the trainer's
+*suggested* pacing — the same role `schedule_due_date` already plays in phase
+1's "Assign case" form — not a visibility mechanism.
+
+Two more corrections in the same pass, both in `views/trainee.py`:
+- Dropped `released_only=True` from the trainee's case fetch (and the
+  matching filter in `app_pages/trainee_questions.py`) — visibility is
+  status-driven only, so a date filter on top of it was redundant at best and
+  wrong at worst (it would have hidden a case the trainer explicitly assigned
+  early, before its suggested release date).
+- Removed the "not released yet" guard in the case workspace, and reworded
+  the "all caught up" congratulations card to never quote a specific release
+  date — assignment timing is the trainer's call, not a schedule the app can
+  promise on their behalf.
+
+Re-verified end to end with real Dev data after the revert: the trainee's
+frame now correctly shows 0 actionable cases (all 30 sit `not_started`,
+trainer-owned) while the trainer's Cases inbox correctly shows all 30 as
+"needs you" — matching "el resto están en mi inbox hasta cuando yo los
+asigno" exactly.
+
+**Collateral damage from the revert, caught immediately: the blanket revert
+clobbered real assignments.** Between the auto-assign bug and its revert, the
+trainer had already assigned 5 real cases each to AARON FONG and Max
+Pentecost through the actual UI — each had a genuine, open
+`homework_assignments` row (`status = 'sent'`, a real due date). The revert's
+`update cases set status = 'not_started' where phase_no = 2 and status =
+'assigned'` didn't exempt those 10 — it doesn't know the difference between
+"assigned by my bug" and "assigned for real," so it knocked their case status
+back to `not_started` while their `homework_assignments` rows stayed. The
+trainer's inbox then showed all 30 as needing assignment again; clicking
+"Assign case" on one of the 10 hit `one_open_homework_per_case_idx` — an open
+assignment already existed for that case.
+`20260823190000_phase_2_case_status_matches_homework.sql` treats
+`homework_assignments` as the source of truth (which is exactly what that
+unique index means: at most one open assignment per case) and restores
+`cases.status = 'assigned'` for any case with an open assignment row left at
+`not_started` — a no-op everywhere this specific inconsistency doesn't exist,
+so safe to replay on Prod later. Verified on Dev: AARON FONG and Max
+Pentecost each show 5 `assigned` (with their real due dates intact) + 25
+`not_started`, and there is no longer any case anywhere with an open
+homework assignment sitting at `not_started`.
 
 ### What the migration does
 
@@ -665,7 +749,7 @@ pytest
 streamlit run streamlit_app.py
 ```
 
-`ruff` clean and 133 tests passing is the current baseline — any new failure is
+`ruff` clean and 137 tests passing is the current baseline — any new failure is
 from your change, not from phase 2.
 
 Manual smoke test after the migration is applied to Dev, using a test trainee:

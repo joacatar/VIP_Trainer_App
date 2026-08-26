@@ -173,6 +173,43 @@ def _render_coming_up(rows: list[dict], *, today: dt.date) -> None:
                 )
 
 
+def _render_all_caught_up(
+    *,
+    trainee: dict,
+    frame,
+) -> None:
+    """Nothing needs the trainee right now — say so plainly instead of
+    pointing at a stale approved case, and explain the phase-2 transition
+    when that's why nothing new has shown up yet.
+
+    `released_on` is the trainer's suggested pacing for assigning phase-2
+    cases (shown in their inbox), not a promise to the trainee — only an
+    explicit "Assign case" makes a case visible here, so no date is quoted.
+    """
+    waiting_on_trainer = apply_case_filter(frame, "with_other", role="trainee")
+    with st.container(border=True, key="trainee_hero"):
+        if not waiting_on_trainer.empty:
+            count = len(waiting_on_trainer)
+            st.caption("WITH YOUR TRAINER")
+            st.markdown(
+                f"#### {count} case{'s' if count != 1 else ''} in review"
+            )
+            st.write(
+                "Nothing needs you right now — check back after your "
+                "trainer responds."
+            )
+            return
+
+        if trainee.get("phase_2_started_on"):
+            st.caption("PHASE 1 COMPLETE")
+            st.markdown("#### 🎉 Congratulations — you finished phase 1")
+            st.write("Your trainer will start assigning live cases soon.")
+        else:
+            st.caption("ALL CAUGHT UP")
+            st.markdown("#### Nothing needs you right now")
+            st.write("Your trainer will assign your next case soon.")
+
+
 def _render_open_corrections_summary(
     *,
     cases: list[dict],
@@ -244,24 +281,33 @@ def render_trainee_portal(
             "check Questions when you have a moment."
         )
 
-    # released_only=True: a trainee must never see a phase-2 case before its
-    # release day, even though phase-1 cases (released the day they're
-    # created) are unaffected by the filter.
-    cases = repository.list_cases(
-        trainee["id"], include_files=True, released_only=True
-    )
+    # Phase-2 cases are never date-gated for the trainee: only the trainer's
+    # explicit "Assign case" action makes one visible (same as phase 1). A
+    # not_started case is trainer-owned, so it never shows as "needs you" or
+    # as the next case below — no released_only filter needed on top of that.
+    cases = repository.list_cases(trainee["id"], include_files=True)
     assignments = repository.list_homework_for_cases(
         [row["id"] for row in cases]
     )
     frame = enrich_cases(cases, assignments, role="trainee")
+    actionable = apply_case_filter(frame, "needs_you", role="trainee")
 
-    next_case = pick_next_case(frame, role="trainee")
-    if next_case is None:
+    next_case = None
+    if frame.empty:
         render_empty_state(
             "No cases yet",
             detail="Ask your trainer to assign your first case.",
         )
+    elif actionable.empty:
+        # Every visible case is either approved or waiting on the trainer —
+        # nothing needs the trainee right now. Falling back to showing an
+        # already-done case as "next up" (the old behavior) reads as broken,
+        # especially right after finishing phase 1: say so plainly instead,
+        # and surface the phase-2 transition when it's the reason nothing
+        # new has landed yet.
+        _render_all_caught_up(trainee=trainee, frame=frame)
     else:
+        next_case = pick_next_case(frame, role="trainee")
         _render_next_up_card(next_case, today=today, key_prefix="trainee")
         coming = _coming_up_rows(
             frame,
@@ -329,19 +375,6 @@ def render_trainee_case_workspace(
     case = repository.get_case(case_id, include_files=True)
     if case is None:
         st.error("This case is unavailable or the link is no longer valid.")
-        if st.button("Back to my cases", icon=":material/arrow_back:"):
-            st.switch_page("app_pages/trainee_cases.py")
-        return
-
-    # A trainee must never open a phase-2 case before its release day, even
-    # via a stale link or a typed URL — released_only only guards the list.
-    released_on = case.get("released_on")
-    if released_on and str(released_on) > dt.date.today().isoformat():
-        render_empty_state(
-            "This case is not released yet.",
-            detail=f"It unlocks on {released_on}.",
-            icon=":material/lock_clock:",
-        )
         if st.button("Back to my cases", icon=":material/arrow_back:"):
             st.switch_page("app_pages/trainee_cases.py")
         return
