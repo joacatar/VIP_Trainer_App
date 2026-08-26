@@ -149,8 +149,9 @@ export function TrainerCasePage() {
   })
 
   const resolve = useMutation({
-    mutationFn: (threadId: string) => resolveThread(threadId),
+    mutationFn: (threadId: string) => resolveThread(threadId, draftRevisionId),
     onSuccess: () => invalidate(),
+    onError: (e: Error) => setMsg(e.message),
   })
 
   const caseRow = caseQ.data

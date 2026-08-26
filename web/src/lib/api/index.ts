@@ -338,16 +338,32 @@ export async function addCorrectionEvent(input: {
   if (error) throw error
 }
 
-export async function resolveThread(threadId: string): Promise<void> {
+// `target_revision_id` has no default on either SQL function (see
+// 20260804090000_correction_threads.sql) — omitting it doesn't fall back to
+// null, it makes PostgREST unable to find a matching function overload at
+// all (PGRST202, 404: "Could not find the function ... in the schema
+// cache"). Both calls below were missing it. `revisionId` is optional here
+// because resolving/reopening a thread outside of an active review pass
+// (no draft revision yet) is a legitimate case — pass whatever the caller
+// has, null included.
+export async function resolveThread(
+  threadId: string,
+  revisionId?: string | null,
+): Promise<void> {
   const { error } = await supabase.rpc('resolve_correction_thread', {
     target_thread_id: threadId,
+    target_revision_id: revisionId ?? null,
   })
   if (error) throw error
 }
 
-export async function reopenThread(threadId: string): Promise<void> {
+export async function reopenThread(
+  threadId: string,
+  revisionId?: string | null,
+): Promise<void> {
   const { error } = await supabase.rpc('reopen_correction_thread', {
     target_thread_id: threadId,
+    target_revision_id: revisionId ?? null,
   })
   if (error) throw error
 }
