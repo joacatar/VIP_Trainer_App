@@ -1,28 +1,28 @@
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { getScreenshotSignedUrl } from '@/lib/api'
 import { SECTION_LABELS, THREAD_STATUS_LABELS } from '@/lib/domain/revisions'
 import type { CorrectionThread, Screenshot } from '@/lib/types'
 import { Button } from './Button'
+import { PasteCommentBox } from './PasteCommentBox'
 
 /**
  * Shared open/resolved correction-thread list — trainer and trainee both
- * use this instead of dumping a flat, unnumbered event log. Fixes:
- * - No count anywhere, so two threads with the same section label read as
- *   one duplicated card instead of a real list (the "puedo ver la lista"
- *   confusion — the data was always there, nothing showed there were two).
- * - `still_open` events carry no body by design (a revision-rollover
- *   marker, not a note) but rendered as repeated blank "still_open:" lines.
- * - Resolved threads had the same visual weight as open ones, burying the
- *   open work a trainee or trainer actually needs to look at.
+ * use this. Trainers can attach more screenshots to an open thread the same
+ * way Streamlit's popover "Screenshots" control works.
  */
 export function CorrectionThreadList({
   threads,
   onResolve,
   resolving,
+  onAttachScreenshots,
+  attaching,
 }: {
   threads: CorrectionThread[]
   onResolve?: (threadId: string) => void
   resolving?: boolean
+  onAttachScreenshots?: (threadId: string, images: File[]) => Promise<void> | void
+  attaching?: boolean
 }) {
   const open = threads.filter((t) => t.status !== 'resolved')
   const resolved = threads.filter((t) => t.status === 'resolved')
@@ -48,6 +48,8 @@ export function CorrectionThreadList({
                 index={i + 1}
                 onResolve={onResolve}
                 resolving={resolving}
+                onAttachScreenshots={onAttachScreenshots}
+                attaching={attaching}
               />
             </li>
           ))}
@@ -78,18 +80,39 @@ function ThreadCard({
   muted,
   onResolve,
   resolving,
+  onAttachScreenshots,
+  attaching,
 }: {
   thread: CorrectionThread
   index?: number
   muted?: boolean
   onResolve?: (threadId: string) => void
   resolving?: boolean
+  onAttachScreenshots?: (threadId: string, images: File[]) => Promise<void> | void
+  attaching?: boolean
 }) {
+  const [showAttach, setShowAttach] = useState(false)
+  const [note, setNote] = useState('')
+  const [images, setImages] = useState<File[]>([])
+  const [localMsg, setLocalMsg] = useState<string | null>(null)
+
   const events = thread.correction_events ?? []
   const withBody = events.filter((e) => e.body && e.body.trim())
   const stillOpenCount = events.filter(
     (e) => e.event_type === 'still_open' && !(e.body && e.body.trim()),
   ).length
+
+  async function saveScreenshots() {
+    if (!onAttachScreenshots || images.length === 0) {
+      setLocalMsg('Paste or upload a screenshot first.')
+      return
+    }
+    setLocalMsg(null)
+    await onAttachScreenshots(thread.id, images)
+    setImages([])
+    setNote('')
+    setShowAttach(false)
+  }
 
   return (
     <div
@@ -107,15 +130,25 @@ function ThreadCard({
             {THREAD_STATUS_LABELS[thread.status] ?? thread.status}
           </span>
         </p>
-        {onResolve && thread.status !== 'resolved' ? (
-          <Button
-            variant="ghost"
-            disabled={resolving}
-            onClick={() => onResolve(thread.id)}
-          >
-            Resolve
-          </Button>
-        ) : null}
+        <div className="flex flex-wrap gap-1">
+          {onAttachScreenshots && thread.status !== 'resolved' ? (
+            <Button
+              variant="ghost"
+              onClick={() => setShowAttach((v) => !v)}
+            >
+              {showAttach ? 'Cancel' : 'Screenshots'}
+            </Button>
+          ) : null}
+          {onResolve && thread.status !== 'resolved' ? (
+            <Button
+              variant="ghost"
+              disabled={resolving}
+              onClick={() => onResolve(thread.id)}
+            >
+              Resolve
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {withBody.map((ev) => (
@@ -132,6 +165,31 @@ function ThreadCard({
       ) : null}
 
       <ThreadScreenshots shots={thread.correction_thread_screenshots ?? []} />
+
+      {showAttach ? (
+        <div className="mt-3 space-y-2">
+          <PasteCommentBox
+            value={note}
+            onChange={setNote}
+            images={images}
+            onImagesChange={setImages}
+            placeholder="Paste screenshots here (Ctrl+V / Cmd+V)"
+            rows={3}
+            disabled={attaching}
+            footer={
+              <Button
+                disabled={attaching || images.length === 0}
+                onClick={() => void saveScreenshots()}
+              >
+                {attaching ? 'Saving…' : 'Save screenshots'}
+              </Button>
+            }
+          />
+          {localMsg ? (
+            <p className="text-xs text-attention">{localMsg}</p>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   )
 }

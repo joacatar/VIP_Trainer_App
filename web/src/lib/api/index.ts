@@ -401,6 +401,17 @@ export async function listRaisedCorrectionsForCases(
   return (data ?? []) as unknown as RaisedCorrectionRow[]
 }
 
+export async function getCaseOwnerUserId(caseId: string): Promise<string | null> {
+  const { data, error } = await supabase
+    .from('cases')
+    .select('trainees(auth_user_id)')
+    .eq('id', caseId)
+    .maybeSingle()
+  if (error) throw error
+  const trainee = data?.trainees as { auth_user_id?: string | null } | null
+  return trainee?.auth_user_id ?? null
+}
+
 /** Trainer-only (RLS: `correction_thread_screenshots` "manage" policy
  * requires is_trainer()) — pastes/uploads a screenshot onto a correction
  * thread, matching Streamlit's Jira-style comment box. Stored under the
@@ -415,6 +426,11 @@ export async function uploadThreadScreenshot(input: {
   uploadedBy: string
   file: File
 }): Promise<void> {
+  if (!input.ownerUserId) {
+    throw new Error(
+      'Cannot upload screenshot: trainee has no linked auth account (auth_user_id). Link their email first.',
+    )
+  }
   const objectPath = screenshotStoragePath({
     ownerUserId: input.ownerUserId,
     caseId: input.caseId,

@@ -15,3 +15,6 @@
 **/*.egg-info/
 *.pyc
 .cursor/mcp.json
+web/.env.local
+web/.env.*.local
+

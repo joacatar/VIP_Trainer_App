@@ -14,7 +14,7 @@ read all of them.
 | [phase-1.md](phase-1.md) | The 32-case catalog training: schedule, file requirements, review cycle, corrections |
 | [phase-2.md](phase-2.md) | The 30-case simulated live-case phase: how it starts, the release schedule, and the corrected assignment model |
 | [gotchas.md](gotchas.md) | Concrete traps found empirically — each one caused a real bug in this session. Read before making schema or status-transition changes |
-| [react-remake.md](react-remake.md) | Standing note: the trainer wants to eventually replace the UI with React. Status, reasoning, what should carry over |
+| [react-remake.md](react-remake.md) | React remake status (in progress in `web/`), stack, coexistence with Streamlit, cutover checklist |
 
 ## How to use this as a future session
 

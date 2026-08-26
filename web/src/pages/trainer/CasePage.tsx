@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { CaseHeader } from '@/components/ui/CaseHeader'
 import { CorrectionThreadList } from '@/components/ui/CorrectionThreadList'
 import { EmptyState } from '@/components/ui/EmptyState'
-import { ImageAttachments } from '@/components/ui/ImageAttachments'
+import { PasteCommentBox } from '@/components/ui/PasteCommentBox'
 import { SkeletonRows } from '@/components/ui/Skeleton'
 import { PageHeader } from '@/components/ui/PageHeader'
 import { useAuth } from '@/hooks/useAuth'
@@ -15,6 +15,7 @@ import {
   createCorrectionThread,
   createRevision,
   getCase,
+  getCaseOwnerUserId,
   getTrainee,
   listCorrectionThreads,
   listQuestionsForCase,
@@ -32,9 +33,6 @@ import {
   SECTION_CHECKLISTS,
   SECTION_LABELS,
 } from '@/lib/domain/revisions'
-import { pastedImageFilename } from '@/lib/domain/screenshots'
-
-const PASTE_HINT = 'Paste screenshots here (Ctrl+V / Cmd+V), Jira-style.'
 
 export function TrainerCasePage() {
   const { caseId = '' } = useParams()
@@ -55,6 +53,11 @@ export function TrainerCasePage() {
     queryKey: ['trainee', caseQ.data?.trainee_id],
     queryFn: () => getTrainee(caseQ.data!.trainee_id!),
     enabled: !!caseQ.data?.trainee_id,
+  })
+  const ownerQ = useQuery({
+    queryKey: ['case-owner', caseId],
+    queryFn: () => getCaseOwnerUserId(caseId),
+    enabled: !!caseId,
   })
   const reqQ = useQuery({
     queryKey: ['requirements', caseId],
@@ -77,6 +80,9 @@ export function TrainerCasePage() {
     enabled: !!caseId,
   })
 
+  const ownerUserId =
+    ownerQ.data ?? traineeQ.data?.auth_user_id ?? user?.id ?? ''
+
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['case', caseId] })
     void qc.invalidateQueries({ queryKey: ['requirements', caseId] })
@@ -85,6 +91,7 @@ export function TrainerCasePage() {
     void qc.invalidateQueries({ queryKey: ['revisions', caseId] })
     void qc.invalidateQueries({ queryKey: ['trainer-cases'] })
     void qc.invalidateQueries({ queryKey: ['progress'] })
+    void qc.invalidateQueries({ queryKey: ['screenshot-urls'] })
   }
 
   const draftRevisionId = useMemo(() => {
@@ -100,28 +107,29 @@ export function TrainerCasePage() {
     },
   })
 
+  async function uploadPending(threadId: string, images: File[]) {
+    for (const file of images) {
+      await uploadThreadScreenshot({
+        threadId,
+        caseId,
+        ownerUserId,
+        uploadedBy: user?.id ?? '',
+        file,
+      })
+    }
+  }
+
   const raiseThread = useMutation({
     mutationFn: async () => {
       const revisionId = await ensureRevision.mutateAsync()
       const threadId = await createCorrectionThread({
         caseId,
         section,
-        // A screenshot-only correction is valid — Streamlit's version
-        // defaults the body the same way rather than blocking the raise.
         body: body.trim() || 'See attached screenshot(s).',
         revisionId,
       })
       if (pendingImages.length > 0) {
-        const ownerUserId = traineeQ.data?.auth_user_id ?? user?.id ?? ''
-        for (const file of pendingImages) {
-          await uploadThreadScreenshot({
-            threadId,
-            caseId,
-            ownerUserId,
-            uploadedBy: user?.id ?? '',
-            file,
-          })
-        }
+        await uploadPending(threadId, pendingImages)
       }
       return threadId
     },
@@ -129,6 +137,21 @@ export function TrainerCasePage() {
       setBody('')
       setPendingImages([])
       setMsg('Correction raised.')
+      invalidate()
+    },
+    onError: (e: Error) => setMsg(e.message),
+  })
+
+  const attachShots = useMutation({
+    mutationFn: async ({
+      threadId,
+      images,
+    }: {
+      threadId: string
+      images: File[]
+    }) => uploadPending(threadId, images),
+    onSuccess: (_d, vars) => {
+      setMsg(`Attached ${vars.images.length} screenshot(s).`)
       invalidate()
     },
     onError: (e: Error) => setMsg(e.message),
@@ -190,7 +213,7 @@ export function TrainerCasePage() {
     <div className="space-y-6">
       <PageHeader
         title="Review workspace"
-        description="Files, corrections by section, publish feedback or approve."
+        description="Paste screenshots into the comment box (Ctrl+V / Cmd+V), same as Streamlit."
         action={
           <Link
             to={`/trainer/cases?trainee=${caseRow.trainee_id ?? ''}`}
@@ -279,6 +302,10 @@ export function TrainerCasePage() {
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <h3 className="font-semibold">Raise correction</h3>
+        <p className="mt-1 text-sm text-muted">
+          Write a note and paste screenshots in the same box — Ctrl+V / Cmd+V,
+          upload, or drag & drop.
+        </p>
         <div className="mt-3 flex flex-wrap gap-2">
           {REVIEW_SECTIONS.map((s) => (
             <button
@@ -311,58 +338,16 @@ export function TrainerCasePage() {
             ))}
           </div>
         ) : null}
-        <textarea
-          className="mt-3 min-h-24 w-full rounded-md border border-border bg-bg px-3 py-2 text-sm"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          onPaste={(e) => {
-            const items = e.clipboardData?.items
-            if (!items) return
-            const images: File[] = []
-            for (const item of items) {
-              if (!item.type.startsWith('image/')) continue
-              const file = item.getAsFile()
-              if (!file) continue
-              images.push(
-                new File(
-                  [file],
-                  pastedImageFilename(item.type, pendingImages.length + images.length + 1),
-                  { type: item.type },
-                ),
-              )
-            }
-            if (images.length > 0) {
-              e.preventDefault()
-              setPendingImages((prev) => [...prev, ...images])
-            }
-          }}
-          placeholder={`Correction for ${SECTION_LABELS[section]}… ${PASTE_HINT}`}
-        />
-        <div className="mt-2 flex flex-wrap items-center gap-2">
-          <label className="cursor-pointer text-xs font-medium text-primary hover:underline">
-            Upload screenshots
-            <input
-              type="file"
-              accept="image/png,image/jpeg,image/webp,image/gif"
-              multiple
-              className="hidden"
-              onChange={(e) => {
-                const files = Array.from(e.target.files ?? [])
-                if (files.length > 0) {
-                  setPendingImages((prev) => [...prev, ...files])
-                }
-                e.target.value = ''
-              }}
-            />
-          </label>
-          <span className="text-xs text-muted">or {PASTE_HINT.toLowerCase()}</span>
+        <div className="mt-3">
+          <PasteCommentBox
+            value={body}
+            onChange={setBody}
+            images={pendingImages}
+            onImagesChange={setPendingImages}
+            placeholder={`Correction for ${SECTION_LABELS[section]}… Paste screenshots with Ctrl+V / Cmd+V`}
+            disabled={raiseThread.isPending}
+          />
         </div>
-        <ImageAttachments
-          files={pendingImages}
-          onRemove={(i) =>
-            setPendingImages((prev) => prev.filter((_, idx) => idx !== i))
-          }
-        />
         <ActionBar>
           <Button
             disabled={
@@ -371,7 +356,7 @@ export function TrainerCasePage() {
             }
             onClick={() => raiseThread.mutate()}
           >
-            Raise correction
+            {raiseThread.isPending ? 'Raising…' : 'Raise correction'}
           </Button>
           <Button
             variant="secondary"
@@ -396,6 +381,10 @@ export function TrainerCasePage() {
           threads={threadsQ.data ?? []}
           onResolve={(id) => resolve.mutate(id)}
           resolving={resolve.isPending}
+          attaching={attachShots.isPending}
+          onAttachScreenshots={async (threadId, images) => {
+            await attachShots.mutateAsync({ threadId, images })
+          }}
         />
       </section>
 
@@ -423,7 +412,10 @@ export function TrainerCasePage() {
                     className="min-h-16 w-full rounded-md border border-border bg-surface px-3 py-2"
                     value={answers[q.id] ?? ''}
                     onChange={(e) =>
-                      setAnswers((prev) => ({ ...prev, [q.id]: e.target.value }))
+                      setAnswers((prev) => ({
+                        ...prev,
+                        [q.id]: e.target.value,
+                      }))
                     }
                     placeholder="Write an answer…"
                   />

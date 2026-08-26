@@ -100,7 +100,10 @@ Streamlit + Supabase tracker for Arthrex APAC **CT planning initial training**.
 A trainer assigns cases to trainees; trainees submit three OneDrive file links
 per case; the trainer reviews, raises corrections, and approves.
 
-- Entrypoint: `streamlit_app.py` → `src/ct_training_tracker/application.py`
+- Entrypoint (Streamlit, live until cutover): `streamlit_app.py` →
+  `src/ct_training_tracker/application.py`
+- Entrypoint (React remake, in progress): `web/` — Vite + Supabase JS; see
+  `.claude/brain/react-remake.md`
 - Multipage routes live in `app_pages/`
 - Legacy Flask peer-feedback app (`app.py`, `templates/`) and
   `APAC INTEGRATION/` are **not** part of this product; do not modify them
@@ -115,10 +118,8 @@ real bug). Start at [`.claude/brain/README.md`](.claude/brain/README.md) for
 the index. **Before touching case status, assignment, or anything phase-2,
 read `.claude/brain/data-model.md` and `.claude/brain/gotchas.md` first** —
 this is not optional, both were written specifically because skipping this
-step caused real, user-facing bugs in this app. There is also a standing
-note at `.claude/brain/react-remake.md` recording the trainer's intent to
-eventually redo the UI in React — read it before starting any frontend
-rewrite work.
+step caused real, user-facing bugs in this app. React remake status and
+rules to preserve: `.claude/brain/react-remake.md`.
 
 ### Architecture rules
 

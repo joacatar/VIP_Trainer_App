@@ -53,6 +53,18 @@ where id = '<auth-user-uuid>';
 | `dev` / feature branches | Dev URL | VIP Trainer (Dev) |
 | `main` | Prod URL | CT-Tracker-Prod |
 
+## React web app (`web/`) — coexistence
+
+The React remake lives in [`web/`](../web/) (Vite + Supabase JS). It uses the
+**same** Supabase projects and RLS as Streamlit. Until cutover:
+
+1. Point local `web/.env.local` at **Dev** (same URL/key as Streamlit secrets).
+2. Deploy React (e.g. Vercel) with `VITE_SUPABASE_URL` + `VITE_SUPABASE_PUBLISHABLE_KEY`.
+3. Add the React site URL to Supabase Auth → Redirect URLs / Site URL.
+4. Keep Streamlit Cloud running for real trainees; switch users only after smoke tests.
+
+See [`web/README.md`](../web/README.md) and [`.claude/brain/react-remake.md`](../.claude/brain/react-remake.md).
+
 ## Paused projects (free-tier slot)
 
 To create Prod under the free **2 active projects** limit, **ordenes-medicas**

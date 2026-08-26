@@ -51,3 +51,47 @@ export function pastedImageFilename(mimeType: string, n: number): string {
         : 'png'
   return `screenshot_${Date.now()}_${n}.${ext}`
 }
+
+/**
+ * Pull image files out of a clipboard / drag DataTransfer.
+ * macOS Safari often puts images in `files` instead of `items` — check both,
+ * same as Streamlit's paste_image.js which reads clipboard items then falls
+ * back.
+ */
+export function extractClipboardImages(
+  data: DataTransfer | null | undefined,
+  startIndex = 1,
+): File[] {
+  if (!data) return []
+  const images: File[] = []
+  const seen = new Set<string>()
+
+  const push = (file: File, mime: string) => {
+    const key = `${file.size}:${mime}:${file.lastModified}`
+    if (seen.has(key)) return
+    seen.add(key)
+    images.push(
+      new File([file], pastedImageFilename(mime, startIndex + images.length), {
+        type: mime || file.type || 'image/png',
+      }),
+    )
+  }
+
+  if (data.items) {
+    for (const item of Array.from(data.items)) {
+      if (!item.type.startsWith('image/')) continue
+      const file = item.getAsFile()
+      if (file) push(file, item.type)
+    }
+  }
+
+  if (images.length === 0 && data.files?.length) {
+    for (const file of Array.from(data.files)) {
+      if (!file.type.startsWith('image/')) continue
+      push(file, file.type)
+    }
+  }
+
+  return images
+}
+

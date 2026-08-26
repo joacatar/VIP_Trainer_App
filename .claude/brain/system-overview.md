@@ -25,11 +25,14 @@ Streamlit at each.
 
 ## Tech stack
 
-- **Streamlit** (multipage app via `st.navigation`/`st.Page`), Python 3.11+.
+- **Streamlit** (multipage app via `st.navigation`/`st.Page`), Python 3.11+ —
+  currently the live client for real trainees on Dev.
+- **React remake** in `web/` (Vite + TypeScript + Tailwind + Supabase JS) —
+  in progress on `feature/react-remake`; coexists until cutover. See
+  `react-remake.md`.
 - **Supabase**: Postgres + Auth + Storage + RLS + Postgres functions (RPCs)
   for anything that must be transactional or `security definer`.
-- A **Supabase MCP server** is available in this environment
-  (`mcp__11daec86-4b45-417e-be42-f656087e273a__*` or similar id) — it can run
+- A **Supabase MCP server** is available in this environment — it can run
   SQL and apply migrations directly against Dev. See gotchas.md for the
   discipline required when using it (pre-flight checks, idempotency).
 
