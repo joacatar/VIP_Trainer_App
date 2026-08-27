@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
-import { Link, useNavigate, useParams } from 'react-router-dom'
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { ActionBar } from '@/components/ui/ActionBar'
 import { Button } from '@/components/ui/Button'
+import {
+  CaseHandoffOverlay,
+  type CaseHandoffState,
+} from '@/components/ui/CaseHandoffOverlay'
 import { CaseHeader } from '@/components/ui/CaseHeader'
 import { CorrectionThreadList } from '@/components/ui/CorrectionThreadList'
 import { EmptyState } from '@/components/ui/EmptyState'
@@ -30,6 +34,7 @@ import {
   touchCaseOpened,
   uploadThreadScreenshot,
 } from '@/lib/api'
+import { caseCatalogLabel, caseLabel } from '@/lib/domain/caseLabels'
 import {
   FILE_KIND_LABELS,
   REVIEW_SECTIONS,
@@ -54,6 +59,7 @@ const RELATED_OPTIONS = [
 export function TrainerCasePage() {
   const { caseId = '' } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
   const qc = useQueryClient()
   const { user } = useAuth()
   const [showAdd, setShowAdd] = useState(false)
@@ -64,6 +70,27 @@ export function TrainerCasePage() {
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [msg, setMsg] = useState<string | null>(null)
   const [msgTone, setMsgTone] = useState<'ok' | 'err'>('ok')
+  const [handoff, setHandoff] = useState<CaseHandoffState | null>(null)
+
+  // Clear composer when the route case changes (prevents "same form, new case").
+  useEffect(() => {
+    setShowAdd(false)
+    setSection(REVIEW_SECTIONS[0].key)
+    setBody('')
+    setRelatedFile('')
+    setPendingImages([])
+    setAnswers({})
+    setMsg(null)
+  }, [caseId])
+
+  // Consume navigation handoff once per arrival.
+  useEffect(() => {
+    const state = location.state as CaseHandoffState | null
+    if (state?.handoff) {
+      setHandoff(state)
+      navigate(location.pathname, { replace: true, state: null })
+    }
+  }, [caseId, location.pathname, location.state, navigate])
 
   const caseQ = useQuery({
     queryKey: ['case', caseId],
@@ -145,10 +172,22 @@ export function TrainerCasePage() {
     setMsgTone(tone)
   }
 
-  async function goToNextCase(nextId: string | null) {
+  async function goToNextCase(
+    nextId: string | null,
+    action: CaseHandoffState['action'],
+  ) {
     invalidate()
+    const fromLabel = caseRow ? caseCatalogLabel(caseRow) : 'previous case'
+    const fromTrainee = traineeQ.data?.full_name ?? null
     if (nextId && nextId !== caseId) {
-      navigate(`/trainer/cases/${nextId}`)
+      navigate(`/trainer/cases/${nextId}`, {
+        state: {
+          handoff: true,
+          action,
+          fromLabel,
+          fromTrainee,
+        } satisfies CaseHandoffState,
+      })
     } else {
       navigate('/trainer/cases?tab=needs_you')
     }
@@ -205,8 +244,7 @@ export function TrainerCasePage() {
       setBody('')
       setPendingImages([])
       setShowAdd(false)
-      flash('Sent — opening next case…')
-      void goToNextCase(nextId)
+      void goToNextCase(nextId, 'sent')
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
@@ -229,8 +267,7 @@ export function TrainerCasePage() {
       return nextId
     },
     onSuccess: (nextId) => {
-      flash('Update sent — opening next case…')
-      void goToNextCase(nextId)
+      void goToNextCase(nextId, 'updated')
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
@@ -248,8 +285,7 @@ export function TrainerCasePage() {
       return nextId
     },
     onSuccess: (nextId) => {
-      flash('Approved — opening next case…')
-      void goToNextCase(nextId)
+      void goToNextCase(nextId, 'approved')
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
@@ -284,9 +320,18 @@ export function TrainerCasePage() {
     approve.isPending
 
   return (
-    <div className="space-y-6 pb-28">
+    <div key={caseId} className="case-switch-in space-y-6 pb-28">
+      {handoff && caseRow ? (
+        <CaseHandoffOverlay
+          handoff={handoff}
+          nowLabel={caseCatalogLabel(caseRow)}
+          nowTrainee={traineeQ.data?.full_name}
+          onContinue={() => setHandoff(null)}
+        />
+      ) : null}
+
       <PageHeader
-        title="Review"
+        title={`Review · ${caseCatalogLabel(caseRow)}`}
         description={`Round ${roundNo} — work open corrections, or add one if you spot something new.`}
         action={
           <Link
@@ -297,6 +342,17 @@ export function TrainerCasePage() {
           </Link>
         }
       />
+
+      <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3">
+        <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+          Active case
+        </p>
+        <p className="text-lg font-semibold text-text">
+          {traineeQ.data?.full_name ? `${traineeQ.data.full_name} · ` : ''}
+          {caseCatalogLabel(caseRow)}
+        </p>
+        <p className="text-sm text-muted">{caseLabel(caseRow)}</p>
+      </div>
 
       <CaseHeader
         caseRow={caseRow}
