@@ -9,25 +9,33 @@ import { SkeletonRows } from '@/components/ui/Skeleton'
 import { StatusBadge } from '@/components/ui/StatusBadge'
 import { TrainingJourney } from '@/components/ui/TrainingJourney'
 import { useAuth } from '@/hooks/useAuth'
-import { getTraineeForUser, listCases } from '@/lib/api'
+import {
+  countOpenCorrectionsByCase,
+  getTraineeForUser,
+  listCases,
+} from '@/lib/api'
 import { caseLabel, casePhaseNo } from '@/lib/domain/caseLabels'
 import {
-  caseOwner,
   formatDue,
   isOverdue,
-  nextStep,
-  TRAINEE_OWNED_STATUSES,
+  isTraineeActionable,
+  shortTraineeStep,
+  sortTraineeActionable,
+  traineeCtaTitle,
 } from '@/lib/domain/ownership'
 import type { CaseRow } from '@/lib/types'
 
+type CaseWithOpens = CaseRow & { openCorrections: number }
+
+/**
+ * Trainee home — one primary CTA, a short coming-up list, then progress.
+ * Actionable queue includes awaiting_resubmission and legacy corrections_sent
+ * with open threads (read feedback), sorted by urgency.
+ */
 export function TraineeDashboardPage() {
   const { user } = useAuth()
   const [phase, setPhase] = useState<1 | 2 | 'all'>('all')
-  // Defaults to the actionable subset, not the full history — a trainee
-  // with 30+ approved cases was seeing all of them before the handful that
-  // actually need attention (audit: "opens on all 56, not the 10 that need
-  // Aaron"). "All" stays one click away.
-  const [scope, setScope] = useState<'needs_you' | 'all'>('needs_you')
+  const [showJourney, setShowJourney] = useState(false)
 
   const traineeQ = useQuery({
     queryKey: ['trainee-for-user', user?.id],
@@ -40,44 +48,61 @@ export function TraineeDashboardPage() {
     queryFn: () =>
       listCases(traineeQ.data!.id, {
         includeFiles: true,
-        // Visibility is status-driven (assigned+), not released_on — gotchas #1/#6.
       }),
     enabled: !!traineeQ.data?.id,
   })
 
   const visibleCases = useMemo(() => {
-    const rows = casesQ.data ?? []
-    // Trainee never sees not_started (trainer-owned until assigned).
-    const visible = rows.filter((c) => c.status !== 'not_started')
-    if (phase === 'all') return visible
-    return visible.filter((c) => casePhaseNo(c) === phase)
+    const rows = (casesQ.data ?? []).filter((c) => c.status !== 'not_started')
+    if (phase === 'all') return rows
+    return rows.filter((c) => casePhaseNo(c) === phase)
   }, [casesQ.data, phase])
 
-  const cases = useMemo(() => {
-    if (scope === 'all') return visibleCases
-    return visibleCases.filter((c) => TRAINEE_OWNED_STATUSES.has(c.status))
-  }, [visibleCases, scope])
+  const caseIds = useMemo(() => visibleCases.map((c) => c.id), [visibleCases])
 
-  // These read from the full visible set, not the scoped `cases` list, so
-  // the KPI row stays constant regardless of which scope tab is selected.
-  const nextUp = useMemo(() => {
-    return (
-      visibleCases.find((c) => TRAINEE_OWNED_STATUSES.has(c.status)) ??
-      visibleCases.find((c) => caseOwner(c.status) === 'trainee') ??
-      null
+  const opensQ = useQuery({
+    queryKey: ['open-correction-counts', traineeQ.data?.id, caseIds.join(',')],
+    queryFn: () => countOpenCorrectionsByCase(caseIds),
+    enabled: caseIds.length > 0,
+  })
+
+  const withOpens: CaseWithOpens[] = useMemo(() => {
+    const counts = opensQ.data ?? {}
+    return visibleCases.map((c) => ({
+      ...c,
+      openCorrections: counts[c.id] ?? 0,
+    }))
+  }, [visibleCases, opensQ.data])
+
+  const actionable = useMemo(() => {
+    return sortTraineeActionable(
+      withOpens.filter((c) => isTraineeActionable(c.status, c.openCorrections)),
     )
-  }, [visibleCases])
+  }, [withOpens])
 
-  const ownedCount = visibleCases.filter((c) =>
-    TRAINEE_OWNED_STATUSES.has(c.status),
+  const nextUp = actionable[0] ?? null
+  const comingUp = actionable.slice(1, 4)
+
+  const waitingOnTrainer = useMemo(
+    () =>
+      withOpens.filter(
+        (c) => c.status === 'in_review' || c.status === 'corrections_sent',
+      ).filter((c) => !isTraineeActionable(c.status, c.openCorrections)),
+    [withOpens],
+  )
+
+  const fixCount = actionable.filter(
+    (c) =>
+      c.status === 'awaiting_resubmission' ||
+      (c.status === 'corrections_sent' && c.openCorrections > 0),
   ).length
-  const overdueCount = visibleCases.filter((c) =>
+  const prepareCount = actionable.filter(
+    (c) => c.status === 'assigned' || c.status === 'submitted',
+  ).length
+  const overdueCount = actionable.filter((c) =>
     isOverdue(c.status, c.due_date),
   ).length
-  const approvedCount = visibleCases.filter((c) => c.status === 'approved').length
-  const inReviewCount = visibleCases.filter(
-    (c) => c.status === 'in_review' || c.status === 'corrections_sent',
-  ).length
+  const approvedCount = withOpens.filter((c) => c.status === 'approved').length
 
   const hasPhase2 = !!traineeQ.data?.phase_2_started_on
 
@@ -95,35 +120,36 @@ export function TraineeDashboardPage() {
   }
 
   return (
-    <div>
+    <div className="space-y-6">
       <PageHeader
-        title="My cases"
-        description={`Hello ${traineeQ.data.full_name}. Status, due date, and next action for every open case.`}
+        title="My work"
+        description={`Hello ${traineeQ.data.full_name}. One next action, then what’s coming up.`}
       />
 
       <MetricsRow
         items={[
-          { label: 'Needs you', value: ownedCount },
-          { label: 'Overdue', value: overdueCount },
-          { label: 'In review', value: inReviewCount },
+          { label: 'Fix corrections', value: fixCount },
+          { label: 'Prepare / submit', value: prepareCount },
+          { label: 'With trainer', value: waitingOnTrainer.length },
           { label: 'Approved', value: approvedCount },
         ]}
       />
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      {hasPhase2 ? (
         <div className="inline-flex rounded-md border border-border bg-surface p-1">
           {(
             [
-              ['needs_you', 'Needs you'],
-              ['all', 'All cases'],
+              ['all', 'All'],
+              [1, 'Phase 1'],
+              [2, 'Live cases'],
             ] as const
           ).map(([value, label]) => (
             <button
-              key={value}
+              key={label}
               type="button"
-              onClick={() => setScope(value)}
+              onClick={() => setPhase(value)}
               className={`rounded px-3 py-1.5 text-sm transition-colors duration-150 ${
-                scope === value
+                phase === value
                   ? 'bg-primary text-primary-fg'
                   : 'text-muted hover:text-text'
               }`}
@@ -132,96 +158,116 @@ export function TraineeDashboardPage() {
             </button>
           ))}
         </div>
-
-        {hasPhase2 ? (
-          <div className="inline-flex rounded-md border border-border bg-surface p-1">
-            {(
-              [
-                ['all', 'All'],
-                [1, 'Phase 1'],
-                [2, 'Live cases'],
-              ] as const
-            ).map(([value, label]) => (
-              <button
-                key={label}
-                type="button"
-                onClick={() => setPhase(value)}
-                className={`rounded px-3 py-1.5 text-sm transition-colors duration-150 ${
-                  phase === value
-                    ? 'bg-primary text-primary-fg'
-                    : 'text-muted hover:text-text'
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
-
-      <div className="mt-6">
-        {nextUp ? (
-          <NextStepCallout title="Up next">
-            <Link
-              to={`/trainee/cases/${nextUp.id}`}
-              className="font-medium text-primary underline-offset-2 hover:underline"
-            >
-              {caseLabel(nextUp)}
-            </Link>
-            <span className="text-muted">
-              {' '}
-              — {nextStep(nextUp.status, 'trainee')} · due{' '}
-              {formatDue(nextUp.due_date)}
-            </span>
-          </NextStepCallout>
-        ) : (
-          <NextStepCallout title="All caught up">
-            Nothing waiting on you right now. Cases appear here once your
-            trainer assigns them.
-          </NextStepCallout>
-        )}
-      </div>
-
-      {visibleCases.length > 0 ? (
-        <div className="mt-6">
-          <h2 className="mb-3 text-lg font-semibold">Your progress</h2>
-          <TrainingJourney cases={visibleCases} />
-        </div>
       ) : null}
 
-      <div key={scope} className="fade-in mt-6 space-y-2">
-        {cases.length === 0 ? (
-          <EmptyState
-            title={
-              scope === 'needs_you' && visibleCases.length > 0
-                ? 'Nothing needs you right now'
-                : 'No cases yet'
-            }
-            description={
-              scope === 'needs_you' && visibleCases.length > 0
-                ? 'Switch to "All cases" to see cases in review or already approved.'
-                : 'When your trainer assigns a case, it will show up here.'
-            }
-          />
-        ) : (
-          cases.map((c) => <CaseListRow key={c.id} caseRow={c} />)
-        )}
-      </div>
+      {nextUp ? (
+        <Link
+          to={`/trainee/cases/${nextUp.id}`}
+          className="block rounded-xl border border-primary/40 bg-primary/5 p-5 transition hover:border-primary"
+        >
+          <p className="text-xs font-semibold uppercase tracking-wide text-primary">
+            Up next
+            {overdueCount > 0 && isOverdue(nextUp.status, nextUp.due_date)
+              ? ' · Overdue'
+              : ''}
+          </p>
+          <p className="mt-1 text-xl font-semibold text-text">
+            {traineeCtaTitle(nextUp.status, nextUp.openCorrections)}
+          </p>
+          <p className="mt-1 text-sm text-muted">
+            {caseLabel(nextUp)} · due {formatDue(nextUp.due_date)}
+            {nextUp.openCorrections > 0
+              ? ` · ${nextUp.openCorrections} open correction${nextUp.openCorrections === 1 ? '' : 's'}`
+              : ''}
+          </p>
+          <p className="mt-3 text-sm font-medium text-primary">Open case →</p>
+        </Link>
+      ) : (
+        <NextStepCallout title="All caught up">
+          {waitingOnTrainer.length > 0
+            ? `${waitingOnTrainer.length} case${waitingOnTrainer.length === 1 ? '' : 's'} with your trainer. Nothing needs you right now.`
+            : 'Nothing waiting on you. Cases appear here once your trainer assigns them.'}
+        </NextStepCallout>
+      )}
+
+      {comingUp.length > 0 ? (
+        <section>
+          <h2 className="mb-2 text-sm font-semibold text-muted">Coming up</h2>
+          <ul className="space-y-2">
+            {comingUp.map((c) => (
+              <CaseListRow key={c.id} caseRow={c} />
+            ))}
+          </ul>
+          {actionable.length > 4 ? (
+            <p className="mt-2 text-xs text-muted">
+              +{actionable.length - 4} more needing you — open any case from
+              progress below.
+            </p>
+          ) : null}
+        </section>
+      ) : null}
+
+      {waitingOnTrainer.length > 0 ? (
+        <details className="rounded-lg border border-border bg-surface">
+          <summary className="cursor-pointer select-none px-4 py-3 text-sm font-medium">
+            Waiting on trainer ({waitingOnTrainer.length})
+          </summary>
+          <ul className="space-y-2 border-t border-border p-3">
+            {waitingOnTrainer.slice(0, 8).map((c) => (
+              <CaseListRow key={c.id} caseRow={c} muted />
+            ))}
+          </ul>
+        </details>
+      ) : null}
+
+      {withOpens.length > 0 ? (
+        <section>
+          <button
+            type="button"
+            onClick={() => setShowJourney((v) => !v)}
+            className="mb-2 text-sm font-semibold text-primary hover:underline"
+          >
+            {showJourney ? 'Hide progress map' : 'Show progress map'}
+          </button>
+          {showJourney ? <TrainingJourney cases={withOpens} /> : null}
+        </section>
+      ) : null}
+
+      <p className="text-sm text-muted">
+        <Link to="/trainee/corrections" className="text-primary hover:underline">
+          My corrections history
+        </Link>
+        {' · '}
+        See patterns across every case.
+      </p>
     </div>
   )
 }
 
-function CaseListRow({ caseRow }: { caseRow: CaseRow }) {
+function CaseListRow({
+  caseRow,
+  muted,
+}: {
+  caseRow: CaseWithOpens
+  muted?: boolean
+}) {
   const overdue = isOverdue(caseRow.status, caseRow.due_date)
   return (
     <Link
       to={`/trainee/cases/${caseRow.id}`}
-      className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-surface px-4 py-3 transition hover:border-primary/40"
+      className={`flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3 transition hover:border-primary/40 ${
+        muted
+          ? 'border-border/70 bg-bg'
+          : 'border-border bg-surface'
+      }`}
     >
       <div>
         <p className="font-medium text-text">{caseLabel(caseRow)}</p>
         <p className="text-sm text-muted">
-          {nextStep(caseRow.status, 'trainee')}
+          {shortTraineeStep(caseRow.status)}
+          {caseRow.openCorrections > 0
+            ? ` · ${caseRow.openCorrections} correction${caseRow.openCorrections === 1 ? '' : 's'}`
+            : ''}
           {overdue ? ' · Overdue' : ''}
         </p>
       </div>

@@ -1,6 +1,6 @@
 import { Link } from 'react-router-dom'
 import { caseCatalogLabel, casePhaseNo } from '@/lib/domain/caseLabels'
-import { attentionState, isOverdue } from '@/lib/domain/ownership'
+import { isOverdue, traineeAttentionState } from '@/lib/domain/ownership'
 import type { AttentionState, CaseRow } from '@/lib/types'
 
 /**
@@ -93,7 +93,7 @@ function JourneyRow({
       </div>
       <div className="flex flex-wrap gap-2">
         {cases.map((c) => {
-          const state = attentionState(c.status)
+          const state = traineeAttentionState(c.status)
           const tone = TONE[state]
           const overdue = isOverdue(c.status, c.due_date)
           return (

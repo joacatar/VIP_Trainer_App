@@ -222,6 +222,20 @@ export async function listTrainerQueue(opts: {
   return rows
 }
 
+/** Next case in Needs you after `afterCaseId` (wraps to first). Null if alone/empty. */
+export async function getNextNeedsYouCaseId(
+  afterCaseId: string,
+): Promise<string | null> {
+  const rows = await listTrainerQueue({ tab: 'needs_you' })
+  const actionable = rows.filter(
+    (c) => c.status === 'in_review' && !c.trainee_is_test,
+  )
+  if (actionable.length === 0) return null
+  const idx = actionable.findIndex((c) => c.id === afterCaseId)
+  if (idx < 0) return actionable[0]?.id ?? null
+  return actionable[(idx + 1) % actionable.length]?.id ?? null
+}
+
 export async function touchCaseOpened(caseId: string): Promise<string> {
   const { data, error } = await supabase.rpc('touch_case_opened', {
     target_case_id: caseId,
@@ -449,6 +463,26 @@ export async function listCorrectionThreads(
     )
   }
   return rows
+}
+
+/** Open correction-thread counts keyed by case_id (trainee dashboard badges). */
+export async function countOpenCorrectionsByCase(
+  caseIds: string[],
+): Promise<Record<string, number>> {
+  if (!caseIds.length) return {}
+  const { data, error } = await supabase
+    .from('corrections_threads')
+    .select('case_id')
+    .in('case_id', caseIds)
+    .neq('status', 'resolved')
+  if (error) throw error
+  const map: Record<string, number> = {}
+  for (const row of data ?? []) {
+    const id = row.case_id as string
+    if (!id) continue
+    map[id] = (map[id] ?? 0) + 1
+  }
+  return map
 }
 
 export async function createCorrectionThread(input: {

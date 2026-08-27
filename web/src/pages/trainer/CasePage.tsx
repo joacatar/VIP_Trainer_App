@@ -18,6 +18,7 @@ import {
   discardEmptyDraftRevisions,
   getCase,
   getCaseOwnerUserId,
+  getNextNeedsYouCaseId,
   getTrainee,
   listCorrectionThreads,
   listQuestionsForCase,
@@ -26,13 +27,11 @@ import {
   markOpenThreadsStillOpen,
   publishCaseReview,
   resolveThread,
-  reviewFileRequirement,
   touchCaseOpened,
   uploadThreadScreenshot,
 } from '@/lib/api'
 import {
   FILE_KIND_LABELS,
-  FILE_STATUS_LABELS,
   REVIEW_SECTIONS,
   SECTION_CHECKLISTS,
   SECTION_LABELS,
@@ -48,14 +47,16 @@ const RELATED_OPTIONS = [
 ] as const
 
 /**
- * Trainer review — one-shot send (no draft park). Approve or send a
- * correction / screenshot update in a single action.
+ * Corrections-first review: work open threads, optionally add one new
+ * correction, Approve when clean. No per-file accept/replace. After send →
+ * next Needs you case.
  */
 export function TrainerCasePage() {
   const { caseId = '' } = useParams()
   const navigate = useNavigate()
   const qc = useQueryClient()
   const { user } = useAuth()
+  const [showAdd, setShowAdd] = useState(false)
   const [section, setSection] = useState<string>(REVIEW_SECTIONS[0].key)
   const [body, setBody] = useState('')
   const [relatedFile, setRelatedFile] = useState('')
@@ -100,37 +101,33 @@ export function TrainerCasePage() {
     enabled: !!caseId,
   })
 
-  // Stamp Last checked once per visit; discard empty orphan drafts.
   useEffect(() => {
     if (!caseId) return
-    void touchCaseOpened(caseId).catch(() => {
-      /* non-fatal — queue still works without stamp */
-    })
+    void touchCaseOpened(caseId).catch(() => {})
     void discardEmptyDraftRevisions(caseId)
       .then(() => qc.invalidateQueries({ queryKey: ['revisions', caseId] }))
-      .catch(() => {
-        /* ignore — approve path still works if discard fails */
-      })
+      .catch(() => {})
   }, [caseId, qc])
 
   const ownerUserId =
     ownerQ.data ?? traineeQ.data?.auth_user_id ?? user?.id ?? ''
 
-  const draftRevision = useMemo(() => {
-    return (revisionsQ.data ?? []).find((r) => r.status === 'draft') ?? null
+  const draftRevisionId = useMemo(() => {
+    const draft = (revisionsQ.data ?? []).find((r) => r.status === 'draft')
+    return (draft?.id as string | undefined) ?? null
   }, [revisionsQ.data])
-  const draftRevisionId = (draftRevision?.id as string | undefined) ?? null
 
   const openThreads = useMemo(
     () => (threadsQ.data ?? []).filter((t) => t.status !== 'resolved'),
     [threadsQ.data],
   )
-  const replacementCount = useMemo(
-    () =>
-      (reqQ.data ?? []).filter((r) => r.status === 'replacement_requested')
-        .length,
-    [reqQ.data],
-  )
+
+  const roundNo = useMemo(() => {
+    const published = (revisionsQ.data ?? []).filter(
+      (r) => r.status === 'published',
+    ).length
+    return Math.max(1, published + (caseQ.data?.status === 'in_review' ? 1 : 0))
+  }, [revisionsQ.data, caseQ.data?.status])
 
   const invalidate = () => {
     void qc.invalidateQueries({ queryKey: ['case', caseId] })
@@ -139,7 +136,6 @@ export function TrainerCasePage() {
     void qc.invalidateQueries({ queryKey: ['case-questions', caseId] })
     void qc.invalidateQueries({ queryKey: ['revisions', caseId] })
     void qc.invalidateQueries({ queryKey: ['trainer-queue'] })
-    void qc.invalidateQueries({ queryKey: ['trainer-cases'] })
     void qc.invalidateQueries({ queryKey: ['progress'] })
     void qc.invalidateQueries({ queryKey: ['screenshot-urls'] })
   }
@@ -147,6 +143,15 @@ export function TrainerCasePage() {
   const flash = (text: string, tone: 'ok' | 'err' = 'ok') => {
     setMsg(text)
     setMsgTone(tone)
+  }
+
+  async function goToNextCase(nextId: string | null) {
+    invalidate()
+    if (nextId && nextId !== caseId) {
+      navigate(`/trainer/cases/${nextId}`)
+    } else {
+      navigate('/trainer/cases?tab=needs_you')
+    }
   }
 
   async function uploadPending(threadId: string, images: File[]) {
@@ -181,6 +186,7 @@ export function TrainerCasePage() {
       if (!body.trim() && pendingImages.length === 0) {
         throw new Error('Write a correction or paste a screenshot first.')
       }
+      const nextId = await getNextNeedsYouCaseId(caseId)
       const revisionId = await ensureDraftRevisionId()
       const threadId = await createCorrectionThread({
         caseId,
@@ -193,14 +199,14 @@ export function TrainerCasePage() {
         await uploadPending(threadId, pendingImages)
       }
       await publishAndNotify(revisionId)
-      return threadId
+      return nextId
     },
-    onSuccess: () => {
+    onSuccess: (nextId) => {
       setBody('')
       setPendingImages([])
-      flash('Sent to trainee.')
-      invalidate()
-      navigate('/trainer/cases?tab=needs_you')
+      setShowAdd(false)
+      flash('Sent — opening next case…')
+      void goToNextCase(nextId)
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
@@ -216,83 +222,34 @@ export function TrainerCasePage() {
       if (images.length === 0) {
         throw new Error('Paste or upload a screenshot first.')
       }
+      const nextId = await getNextNeedsYouCaseId(caseId)
       const revisionId = await ensureDraftRevisionId()
       await uploadPending(threadId, images)
       await publishAndNotify(revisionId)
-      return threadId
+      return nextId
     },
-    onSuccess: () => {
-      flash('Update sent to trainee.')
-      invalidate()
-      navigate('/trainer/cases?tab=needs_you')
-    },
-    onError: (e: Error) => flash(e.message, 'err'),
-  })
-
-  const sendReplacements = useMutation({
-    mutationFn: async () => {
-      if (replacementCount === 0) {
-        throw new Error('Mark at least one file for replacement first.')
-      }
-      // File decisions already applied via review_file_requirement; publish
-      // to move the case to awaiting_resubmission / notify path.
-      await publishCaseReview({
-        caseId,
-        revisionId: draftRevisionId,
-        approvePackage: false,
-      })
-      if (draftRevisionId && openThreads.length > 0) {
-        await markOpenThreadsStillOpen(caseId, draftRevisionId)
-      }
-    },
-    onSuccess: () => {
-      flash('Sent — trainee must replace marked files.')
-      invalidate()
-      navigate('/trainer/cases?tab=needs_you')
+    onSuccess: (nextId) => {
+      flash('Update sent — opening next case…')
+      void goToNextCase(nextId)
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
 
   const approve = useMutation({
     mutationFn: async () => {
+      const nextId = await getNextNeedsYouCaseId(caseId)
       await discardEmptyDraftRevisions(caseId)
-      const acceptAll = (reqQ.data ?? [])
-        .filter((r) =>
-          ['submitted', 'under_review', 'accepted'].includes(r.status),
-        )
-        .map((r) => ({
-          requirement_id: r.id,
-          decision: 'accepted',
-          note: '',
-        }))
       await publishCaseReview({
         caseId,
         revisionId: null,
-        fileDecisions: acceptAll,
+        fileDecisions: [],
         approvePackage: true,
       })
+      return nextId
     },
-    onSuccess: () => {
-      flash('Case approved.')
-      invalidate()
-      navigate('/trainer/cases?tab=needs_you')
-    },
-    onError: (e: Error) => flash(e.message, 'err'),
-  })
-
-  const fileDecision = useMutation({
-    mutationFn: (input: {
-      requirementId: string
-      decision: string
-      note?: string
-    }) => reviewFileRequirement(input),
-    onSuccess: (_d, vars) => {
-      flash(
-        vars.decision === 'accepted'
-          ? 'File accepted.'
-          : 'Replacement marked — click Send replacements when ready.',
-      )
-      invalidate()
+    onSuccess: (nextId) => {
+      flash('Approved — opening next case…')
+      void goToNextCase(nextId)
     },
     onError: (e: Error) => flash(e.message, 'err'),
   })
@@ -320,25 +277,23 @@ export function TrainerCasePage() {
 
   const canReview = REVIEWABLE.includes(caseRow.status)
   const checklists = SECTION_CHECKLISTS[section] ?? []
-  const canApprove =
-    canReview && openThreads.length === 0 && replacementCount === 0
+  const canApprove = canReview && openThreads.length === 0
   const busy =
     sendCorrection.isPending ||
     sendThreadUpdate.isPending ||
-    sendReplacements.isPending ||
     approve.isPending
 
   return (
     <div className="space-y-6 pb-28">
       <PageHeader
         title="Review"
-        description="Approve the package, or send one correction — no draft to forget."
+        description={`Round ${roundNo} — work open corrections, or add one if you spot something new.`}
         action={
           <Link
             to="/trainer/cases?tab=needs_you"
             className="text-sm text-primary hover:underline"
           >
-            Back to Needs you
+            Needs you
           </Link>
         }
       />
@@ -369,176 +324,60 @@ export function TrainerCasePage() {
 
       {!canReview ? (
         <NextStepCallout title="Not in review">
-          Status is <strong>{caseRow.status}</strong>. Approve / send only work
-          when the case is <strong>in review</strong> or{' '}
-          <strong>corrections sent</strong>.
+          Status is <strong>{caseRow.status}</strong>. Send / Approve only work
+          when the case is <strong>in review</strong>.
           {caseRow.status === 'approved'
-            ? ' Already approved — cannot send back from the app.'
+            ? ' Already approved.'
             : null}
         </NextStepCallout>
-      ) : null}
+      ) : openThreads.length > 0 ? (
+        <NextStepCallout title={`Round ${roundNo} — open corrections`}>
+          Resolve what the trainee fixed, or attach a screenshot and{' '}
+          <strong>Send update</strong> on a thread that is still wrong. Add a
+          new correction only if you spot something new.
+        </NextStepCallout>
+      ) : (
+        <NextStepCallout title={`Round ${roundNo} — clear`}>
+          No open corrections. Approve the case, or add a new correction if
+          something is still wrong.
+        </NextStepCallout>
+      )}
 
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-semibold">Files</h3>
-        <ul className="mt-3 space-y-3">
+        <h3 className="font-semibold">Files (open only)</h3>
+        <p className="mt-1 text-sm text-muted">
+          Links for reference — no per-file accept / replace. Corrections carry
+          the feedback.
+        </p>
+        <ul className="mt-3 space-y-2">
           {(reqQ.data ?? []).map((req) => (
             <li
               key={req.id}
-              className="rounded-md border border-border bg-bg p-3 text-sm"
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-bg px-3 py-2 text-sm"
             >
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="font-medium">
-                  {FILE_KIND_LABELS[req.kind] ?? req.kind}
-                </p>
-                <span className="text-xs text-muted">
-                  {FILE_STATUS_LABELS[req.status] ?? req.status}
-                </span>
-              </div>
+              <span className="font-medium">
+                {FILE_KIND_LABELS[req.kind] ?? req.kind}
+              </span>
               {req.external_url ? (
                 <a
                   href={req.external_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-1 inline-block text-primary hover:underline"
+                  className="text-primary hover:underline"
                 >
-                  Open OneDrive link
+                  Open OneDrive
                 </a>
               ) : (
-                <p className="mt-1 text-muted">No link yet</p>
+                <span className="text-muted">No link</span>
               )}
-              {canReview ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <Button
-                    variant="secondary"
-                    onClick={() =>
-                      fileDecision.mutate({
-                        requirementId: req.id,
-                        decision: 'accepted',
-                      })
-                    }
-                  >
-                    Accept
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    onClick={() =>
-                      fileDecision.mutate({
-                        requirementId: req.id,
-                        decision: 'rejected',
-                        note: 'Please replace this file',
-                      })
-                    }
-                  >
-                    Request replacement
-                  </Button>
-                </div>
-              ) : null}
             </li>
           ))}
         </ul>
-        {canReview && replacementCount > 0 ? (
-          <ActionBar>
-            <Button
-              disabled={busy}
-              onClick={() => sendReplacements.mutate()}
-            >
-              {sendReplacements.isPending
-                ? 'Sending…'
-                : `Send replacements (${replacementCount})`}
-            </Button>
-          </ActionBar>
-        ) : null}
-      </section>
-
-      <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-semibold">Send a correction</h3>
-        <p className="mt-1 text-sm text-muted">
-          One correction (text and/or screenshots) goes to the trainee
-          immediately.
-        </p>
-
-        {!canReview ? (
-          <p className="mt-3 text-sm text-muted">Disabled while not in review.</p>
-        ) : (
-          <>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {REVIEW_SECTIONS.map((s) => (
-                <button
-                  key={s.key}
-                  type="button"
-                  onClick={() => setSection(s.key)}
-                  className={`rounded-md px-2.5 py-1 text-xs font-medium ${
-                    section === s.key
-                      ? 'bg-primary text-primary-fg'
-                      : 'bg-surface-2 text-muted'
-                  }`}
-                >
-                  {s.label}
-                </button>
-              ))}
-            </div>
-
-            <div className="mt-3 flex flex-wrap gap-2">
-              {RELATED_OPTIONS.map((opt) => (
-                <button
-                  key={opt.value || 'none'}
-                  type="button"
-                  onClick={() => setRelatedFile(opt.value)}
-                  className={`rounded-md border px-2.5 py-1 text-xs ${
-                    relatedFile === opt.value
-                      ? 'border-primary bg-primary/10 text-primary'
-                      : 'border-border text-muted'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
-
-            {checklists.length > 0 ? (
-              <div className="mt-3 flex flex-wrap gap-2">
-                {checklists.map((item) => (
-                  <button
-                    key={item}
-                    type="button"
-                    className="rounded-md border border-border bg-bg px-2 py-1 text-left text-xs hover:border-primary"
-                    onClick={() =>
-                      setBody((prev) => (prev ? `${prev}\n${item}` : item))
-                    }
-                  >
-                    {item}
-                  </button>
-                ))}
-              </div>
-            ) : null}
-
-            <div className="mt-3">
-              <PasteCommentBox
-                value={body}
-                onChange={setBody}
-                images={pendingImages}
-                onImagesChange={setPendingImages}
-                placeholder={`Correction for ${SECTION_LABELS[section]}… Paste with Ctrl+V / Cmd+V`}
-                disabled={busy}
-              />
-            </div>
-            <ActionBar>
-              <Button
-                disabled={
-                  busy || (!body.trim() && pendingImages.length === 0)
-                }
-                onClick={() => sendCorrection.mutate()}
-              >
-                {sendCorrection.isPending ? 'Sending…' : 'Send correction'}
-              </Button>
-            </ActionBar>
-          </>
-        )}
       </section>
 
       <section className="rounded-lg border border-border bg-surface p-4">
         <h3 className="font-semibold">
-          Open corrections ({openThreads.length})
+          Corrections ({openThreads.length} open)
         </h3>
         <CorrectionThreadList
           threads={threadsQ.data ?? []}
@@ -557,23 +396,112 @@ export function TrainerCasePage() {
       </section>
 
       {canReview ? (
+        <section className="rounded-lg border border-border bg-surface p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-semibold">Add a correction</h3>
+            <Button
+              variant="secondary"
+              onClick={() => setShowAdd((v) => !v)}
+            >
+              {showAdd ? 'Hide' : 'Something new'}
+            </Button>
+          </div>
+          {showAdd ? (
+            <>
+              <p className="mt-2 text-sm text-muted">
+                Sends immediately and opens the next case in Needs you.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {REVIEW_SECTIONS.map((s) => (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setSection(s.key)}
+                    className={`rounded-md px-2.5 py-1 text-xs font-medium ${
+                      section === s.key
+                        ? 'bg-primary text-primary-fg'
+                        : 'bg-surface-2 text-muted'
+                    }`}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {RELATED_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value || 'none'}
+                    type="button"
+                    onClick={() => setRelatedFile(opt.value)}
+                    className={`rounded-md border px-2.5 py-1 text-xs ${
+                      relatedFile === opt.value
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border text-muted'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+              {checklists.length > 0 ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {checklists.map((item) => (
+                    <button
+                      key={item}
+                      type="button"
+                      className="rounded-md border border-border bg-bg px-2 py-1 text-left text-xs hover:border-primary"
+                      onClick={() =>
+                        setBody((prev) => (prev ? `${prev}\n${item}` : item))
+                      }
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+              <div className="mt-3">
+                <PasteCommentBox
+                  value={body}
+                  onChange={setBody}
+                  images={pendingImages}
+                  onImagesChange={setPendingImages}
+                  placeholder={`Correction for ${SECTION_LABELS[section]}…`}
+                  disabled={busy}
+                />
+              </div>
+              <ActionBar>
+                <Button
+                  disabled={
+                    busy || (!body.trim() && pendingImages.length === 0)
+                  }
+                  onClick={() => sendCorrection.mutate()}
+                >
+                  {sendCorrection.isPending
+                    ? 'Sending…'
+                    : 'Send correction → next'}
+                </Button>
+              </ActionBar>
+            </>
+          ) : null}
+        </section>
+      ) : null}
+
+      {canReview ? (
         <section className="sticky bottom-0 z-20 -mx-6 border-t border-border bg-surface/95 px-6 py-4 shadow-[0_-8px_24px_rgba(0,0,0,0.08)] backdrop-blur">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3">
             <div className="text-sm">
               <p className="font-semibold">Finish</p>
               <p className="text-muted">
                 {canApprove
-                  ? 'No open corrections — you can approve.'
-                  : openThreads.length > 0
-                    ? 'Resolve open corrections before approving, or send another.'
-                    : 'Clear file replacements before approving.'}
+                  ? 'All corrections resolved — approve when the package is good.'
+                  : 'Resolve or send updates on open corrections before approving.'}
               </p>
             </div>
             <Button
               disabled={!canApprove || busy}
               onClick={() => approve.mutate()}
             >
-              {approve.isPending ? 'Approving…' : 'Approve case'}
+              {approve.isPending ? 'Approving…' : 'Approve → next'}
             </Button>
           </div>
         </section>

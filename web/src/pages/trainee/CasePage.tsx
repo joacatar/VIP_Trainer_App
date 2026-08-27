@@ -158,13 +158,19 @@ export function TraineeCasePage() {
       {caseRow.status === 'corrections_sent' ||
       caseRow.status === 'awaiting_resubmission' ? (
         <NextStepCallout title="Trainer sent corrections">
-          Read the feedback below, fix the files that need replacement, then
-          submit the package again.
+          Fix the items below in your OneDrive files (update links if you
+          replaced a file), then submit the package again for review.
         </NextStepCallout>
       ) : null}
 
       <section className="rounded-lg border border-border bg-surface p-4">
-        <h3 className="font-semibold">Corrections</h3>
+        <h3 className="font-semibold">
+          Corrections to fix
+          {(threadsQ.data ?? []).filter((t) => t.status !== 'resolved').length >
+          0
+            ? ` (${(threadsQ.data ?? []).filter((t) => t.status !== 'resolved').length})`
+            : ''}
+        </h3>
         <CorrectionThreadList threads={threadsQ.data ?? []} />
       </section>
 
@@ -191,7 +197,8 @@ export function TraineeCasePage() {
       <section className="rounded-lg border border-border bg-surface p-4">
         <h3 className="font-semibold">Deliverables</h3>
         <p className="mt-1 text-sm text-muted">
-          Paste OneDrive share links for PDF 1, PDF 2, and OV.
+          Paste OneDrive share links for PDF 1, PDF 2, and OV. After
+          corrections, update a link only if you replaced that file.
         </p>
         <div className="mt-4 space-y-4">
           {(reqQ.data ?? []).map((req) => {
@@ -210,7 +217,7 @@ export function TraineeCasePage() {
                 </div>
                 {req.replacement_reason ? (
                   <p className="mt-1 text-sm text-attention">
-                    Replacement requested: {req.replacement_reason}
+                    Note: {req.replacement_reason}
                   </p>
                 ) : null}
                 <input

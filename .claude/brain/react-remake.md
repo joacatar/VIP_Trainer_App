@@ -37,6 +37,10 @@ npm install && npm run dev
 - Screenshot paste/upload for correction threads — **done**.
 - Trainer daily flow redesign — **done**: Needs you queue (Received /
   Last checked), bulk assign, one-shot send (no draft park). Kanban removed.
+  Corrections-only return path: publish → `awaiting_resubmission` (no
+  per-file accept/replace in React); after send/approve → next Needs you case.
+  Trainee home: hero Up next + coming up by urgency, open-correction badges;
+  legacy `corrections_sent` with open threads backfilled to awaiting.
 - Bulk due-date editor UI (API helper exists).
 - Analytics / section-stats screens (trainer).
 - Deploy to Vercel + Auth redirect URLs + smoke with real Dev accounts —
